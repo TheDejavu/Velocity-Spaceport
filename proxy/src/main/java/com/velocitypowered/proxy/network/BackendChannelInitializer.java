@@ -55,7 +55,7 @@ public class BackendChannelInitializer extends ChannelInitializer<Channel> {
         .addLast(READ_TIMEOUT,
             new ReadTimeoutHandler(server.getConfiguration().getReadTimeout(),
                 TimeUnit.MILLISECONDS))
-        .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.INSTANCE)
+        .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.create())
         .addLast(MINECRAFT_DECODER,
             new MinecraftDecoder(ProtocolUtils.Direction.CLIENTBOUND))
         .addLast(FLOW_HANDLER, new AutoReadHolderHandler())

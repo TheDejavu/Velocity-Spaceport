@@ -66,7 +66,7 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
             new ReadTimeoutHandler(this.server.getConfiguration().getReadTimeout(),
                 TimeUnit.MILLISECONDS))
         .addLast(LEGACY_PING_ENCODER, LegacyPingEncoder.INSTANCE)
-        .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.INSTANCE)
+        .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.create())
         .addLast(MINECRAFT_DECODER, new MinecraftDecoder(ProtocolUtils.Direction.SERVERBOUND))
         .addLast(MINECRAFT_ENCODER, new MinecraftEncoder(ProtocolUtils.Direction.CLIENTBOUND));
 

@@ -580,7 +580,7 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
 
       if (removedDecoder != null && removedEncoder != null) {
         channel.pipeline().addBefore(MINECRAFT_DECODER, FRAME_ENCODER,
-            MinecraftVarintLengthEncoder.INSTANCE);
+            MinecraftVarintLengthEncoder.create());
         channel.pipeline().fireUserEventTriggered(VelocityConnectionEvent.COMPRESSION_DISABLED);
       }
     } else {

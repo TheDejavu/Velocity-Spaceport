@@ -20,11 +20,16 @@ package com.velocitypowered.proxy.protocol.netty;
 import static com.velocitypowered.proxy.protocol.netty.MinecraftVarintLengthEncoder.IS_JAVA_CIPHER;
 
 import com.velocitypowered.natives.compression.VelocityCompressor;
+import com.velocitypowered.natives.util.BufferPreference;
 import com.velocitypowered.natives.util.MoreByteBufUtils;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPromise;
+import io.netty.handler.codec.EncoderException;
 import io.netty.handler.codec.MessageToByteEncoder;
+import io.netty.util.ReferenceCountUtil;
+import java.nio.channels.ClosedChannelException;
 import java.util.zip.DataFormatException;
 
 /**
@@ -34,10 +39,51 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
 
   private int threshold;
   private final VelocityCompressor compressor;
+  private final WriteCoalescer coalescer;
 
+  /**
+   * Creates the encoder.
+   *
+   * @param threshold the compression threshold
+   * @param compressor the compressor to use
+   */
   public MinecraftCompressorAndLengthEncoder(int threshold, VelocityCompressor compressor) {
     this.threshold = threshold;
     this.compressor = compressor;
+    this.coalescer = WriteCoalescer.ENABLED ? new WriteCoalescer(!IS_JAVA_CIPHER
+        || compressor.preferredBufferType() == BufferPreference.DIRECT_REQUIRED) : null;
+  }
+
+  @Override
+  public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
+      throws Exception {
+    if (coalescer == null || !(msg instanceof ByteBuf buf)) {
+      if (coalescer != null) {
+        coalescer.writeBatch(ctx); // keep order with whatever passes us by
+      }
+      super.write(ctx, msg, promise);
+      return;
+    }
+    // worst case: 3-byte length + 5-byte size + data that did not compress
+    ByteBuf out = coalescer.batch(ctx, buf.readableBytes() + 8);
+    int mark = out.writerIndex();
+    try {
+      encode(ctx, buf, out);
+    } catch (Throwable e) {
+      out.writerIndex(mark); // drop the half-written packet, keep the rest of the batch
+      throw e instanceof EncoderException ee ? ee : new EncoderException(e);
+    } finally {
+      ReferenceCountUtil.release(buf);
+    }
+    coalescer.added(ctx, promise);
+  }
+
+  @Override
+  public void flush(ChannelHandlerContext ctx) throws Exception {
+    if (coalescer != null) {
+      coalescer.writeBatch(ctx);
+    }
+    ctx.flush();
   }
 
   @Override
@@ -47,7 +93,8 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
       // Under the threshold, there is nothing to do.
       ProtocolUtils.writeVarInt(out, uncompressed + 1);
       out.writeByte(0);
-      out.writeBytes(msg);
+      WriteCoalescer.append(msg, out);
+      msg.skipBytes(uncompressed);
     } else {
       handleCompressed(ctx, msg, out);
     }
@@ -57,6 +104,7 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
       throws DataFormatException {
     int uncompressed = msg.readableBytes();
 
+    final int start = out.writerIndex();
     out.writeMedium(0); // Reserve the packet length
     ProtocolUtils.writeVarInt(out, uncompressed);
     ByteBuf compatibleIn = MoreByteBufUtils.ensureCompatible(ctx.alloc(), compressor, msg);
@@ -72,8 +120,8 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
       throw new DataFormatException("The server sent a very large (over 2MiB compressed) packet.");
     }
 
-    int packetLength = out.readableBytes() - 3;
-    out.setMedium(0, ProtocolUtils.encode21BitVarInt(packetLength)); // Rewrite packet length
+    int packetLength = out.writerIndex() - start - 3;
+    out.setMedium(start, ProtocolUtils.encode21BitVarInt(packetLength)); // Rewrite packet length
   }
 
   @Override
@@ -95,6 +143,13 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
 
   @Override
   public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+    if (coalescer != null) {
+      if (ctx.channel().isActive()) {
+        coalescer.writeBatch(ctx); // replaced (e.g. threshold change): keep what we hold
+      } else {
+        coalescer.discard(new ClosedChannelException());
+      }
+    }
     compressor.close();
   }
 
