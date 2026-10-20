@@ -34,6 +34,14 @@ public class Velocity {
   private static final Logger logger;
 
   static {
+    // Spaceport: Netty turns sun.misc.Unsafe off by default on Java 25+, which sends every direct
+    // buffer access and copy through freshly allocated NIO ByteBuffer slices. Must run before any
+    // Netty class loads. Add --sun-misc-unsafe-memory-access=allow to silence the JDK warning.
+    if (!VelocityProperties.hasProperty("io.netty.noUnsafe")
+        && VelocityProperties.readBoolean("spaceport.netty-unsafe", true)) {
+      System.setProperty("io.netty.noUnsafe", "false");
+    }
+
     System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
     logger = LogManager.getLogger(Velocity.class);
 
