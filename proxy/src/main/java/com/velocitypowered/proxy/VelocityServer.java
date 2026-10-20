@@ -957,6 +957,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     });
     NetworkActions actions = new NetworkActions(this, cluster);
     cluster.setActions(actions);
+    if (!configuration.isAcceptTransfers()) {
+      logger.warn("[network] is on but accepts-transfers is false: players transferred from a"
+          + " draining proxy will be refused here. Set advanced.accepts-transfers = true.");
+    }
     cluster.start();
     network = new VelocityNetwork(this, cluster, actions);
     NetworkCommands.register(this);

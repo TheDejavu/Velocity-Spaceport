@@ -7,6 +7,7 @@
 
 package com.velocitypowered.api.network;
 
+import com.velocitypowered.api.util.GameProfile;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
@@ -109,4 +110,21 @@ public interface Network {
    * Stops a drain; the proxy takes new players again.
    */
   void cancelDrain();
+
+  /**
+   * Looks up a player's profile (uuid, name, skin) in the network's shared cache, filled by every
+   * login on every proxy. Players offline for longer than the cache lifetime are not found.
+   *
+   * @param uuid the player
+   * @return the cached profile, if any
+   */
+  CompletableFuture<Optional<GameProfile>> getCachedProfile(UUID uuid);
+
+  /**
+   * Looks up a player's profile by name, ignoring case, in the network's shared cache.
+   *
+   * @param username the name
+   * @return the cached profile, if any
+   */
+  CompletableFuture<Optional<GameProfile>> getCachedProfile(String username);
 }

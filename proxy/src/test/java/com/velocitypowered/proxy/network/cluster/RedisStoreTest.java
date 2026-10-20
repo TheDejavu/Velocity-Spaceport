@@ -162,8 +162,8 @@ class RedisStoreTest {
     store.claim(record(one, "One", "d", 1), 1, 5_000).join();
     store.claim(record(two, "Two", "d", 2), 1, 5_000).join();
 
-    assertEquals(-1, store.sweep("d", 5_000, false).join());
-    assertEquals(2, store.sweep("d", 5_000, true).join());
+    assertEquals(-1, store.sweep("d", 5_000, false, 0).join());
+    assertEquals(2, store.sweep("d", 5_000, true, 0).join());
     assertEquals(Optional.empty(), store.player(one).join());
     assertEquals(Optional.empty(), store.uuidOf("two").join());
     assertFalse(redis.sismember(prefix + "{net}:proxies", "d"));

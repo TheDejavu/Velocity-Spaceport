@@ -26,6 +26,7 @@ import com.velocitypowered.api.event.network.NetworkPlayerJoinEvent;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.ClusterService.LoginResult;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Presence rules with several proxies sharing one in-memory store.
@@ -78,7 +80,7 @@ class ClusterServiceTest {
     }
 
     LoginResult login(UUID uuid, String name) throws Exception {
-      LoginResult r = service.claimLogin(uuid, name, "192.0.2.9").get(20, TimeUnit.SECONDS);
+      LoginResult r = service.claimLogin(uuid, name, "192.0.2.9", "[]").get(20, TimeUnit.SECONDS);
       if (r.denyReason() == null) {
         players.put(uuid, r.session());
       }
@@ -89,7 +91,7 @@ class ClusterServiceTest {
   private FakeProxy proxy(String id, String duplicateLogin, String downPolicy) {
     FakeProxy p = new FakeProxy();
     NetworkConfig config = new NetworkConfig(true, id, "", "", "local", duplicateLogin,
-        downPolicy, "", 5, 120);
+        downPolicy, "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false);
     p.service = new ClusterService(config, id, store, p);
     p.service.start();
     services.add(p.service);
@@ -98,6 +100,13 @@ class ClusterServiceTest {
 
   private FakeProxy proxy(String id) {
     return proxy(id, "newest-wins", "stop-logins");
+  }
+
+  @TempDir
+  static Path keyDir;
+
+  private static String secret() {
+    return keyDir.resolve("network-secret.key").toString();
   }
 
   @AfterEach
@@ -256,7 +265,8 @@ class ClusterServiceTest {
     proxy("a");
     FakeProxy twin = new FakeProxy();
     twin.service = new ClusterService(new NetworkConfig(true, "a", "", "", "local", "newest-wins",
-        "stop-logins", "", 5, 120), "a", store, twin);
+        "stop-logins", "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false), "a", store,
+        twin);
     assertThrows(IllegalStateException.class, twin.service::start);
   }
 
@@ -287,6 +297,54 @@ class ClusterServiceTest {
     FakeProxy a = proxy("a");
     a.service.setDraining(true);
     await(() -> store.proxy("a").join().map(NetworkStore.ProxyState::draining).orElse(false));
+  }
+
+  @Test
+  void transferTicketRoutesToTheSameServerOnce() throws Exception {
+    FakeProxy a = proxy("a");
+    FakeProxy b = proxy("b");
+    UUID steve = UUID.randomUUID();
+    a.login(steve, "Steve");
+    byte[] ticket = a.service.issueTicket(steve, "Steve", "lobby", "192.0.2.9");
+    a.service.releaseForTransfer(steve).join();
+    assertTrue(b.service.redeem(ticket, "192.0.2.9", "Steve", steve).join().isPresent());
+    assertEquals("lobby", b.login(steve, "Steve").route());
+    // the same ticket again (replay) is refused
+    assertTrue(b.service.redeem(ticket, "192.0.2.9", "Steve", steve).join().isEmpty());
+  }
+
+  @Test
+  void ticketOnlyForItsPlayerAndAddress() {
+    FakeProxy a = proxy("a");
+    UUID steve = UUID.randomUUID();
+    byte[] ticket = a.service.issueTicket(steve, "Steve", "lobby", "192.0.2.9");
+    assertTrue(a.service.redeem(ticket, "192.0.2.66", "Steve", steve).join().isEmpty());
+    assertTrue(a.service.redeem(ticket, "192.0.2.9", "Alex", steve).join().isEmpty());
+    assertTrue(a.service.redeem(ticket, "192.0.2.9", "Steve", UUID.randomUUID()).join()
+        .isEmpty());
+    assertTrue(a.service.redeem(null, "192.0.2.9", "Steve", steve).join().isEmpty());
+    // the rejections above did not use the nonce up
+    assertTrue(a.service.redeem(ticket, "192.0.2.9", "Steve", steve).join().isPresent());
+  }
+
+  @Test
+  void routeHintWithoutCookie() throws Exception {
+    FakeProxy b = proxy("b");
+    UUID steve = UUID.randomUUID();
+    store.putRoute(steve, "survival", 60_000).join();
+    assertEquals("survival", b.login(steve, "Steve").route());
+    assertNull(b.login(UUID.randomUUID(), "Alex").route());
+  }
+
+  @Test
+  void crashedProxyPlayersGoBackToTheirServer() throws Exception {
+    UUID steve = UUID.randomUUID();
+    store.tick("crashed", 1, 15_000, "x").join();
+    store.claim(new PlayerRecord(steve, "Steve", "crashed", 1, "skyblock", "192.0.2.4", 0), 1,
+        5_000).join();
+    FakeProxy b = proxy("b");
+    skew.addAndGet(ClusterService.DEAD_AFTER_MILLIS + 1_000);
+    assertEquals("skyblock", b.login(steve, "Steve").route());
   }
 
   @Test

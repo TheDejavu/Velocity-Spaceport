@@ -30,6 +30,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +46,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.apache.logging.log4j.LogManager;
@@ -108,6 +112,12 @@ public final class ClusterService implements AutoCloseable {
   private final String candidateGeneration = UUID.randomUUID().toString();
   private final String instance = UUID.randomUUID().toString();
   private final MessageBus bus;
+  private final NetworkConfig config;
+  private final Map<UUID, TicketRoute> ticketRoutes = new ConcurrentHashMap<>();
+  private volatile RouteTicket.@Nullable Keys ticketKeys;
+  private final LongAdder ticketsAccepted = new LongAdder();
+  private final LongAdder ticketsRejected = new LongAdder();
+  private final LongAdder authSkipped = new LongAdder();
   private volatile boolean duplicateId;
   private volatile boolean draining;
   private final LongAdder claimsOk = new LongAdder();
@@ -159,6 +169,7 @@ public final class ClusterService implements AutoCloseable {
     this.newestWins = config.newestWins();
     this.localOnlyWhenDown = config.localOnlyWhenDown();
     this.bus = new MessageBus(store, proxyId, timer);
+    this.config = config;
   }
 
   /**
@@ -167,11 +178,12 @@ public final class ClusterService implements AutoCloseable {
    * store is unreachable the proxy still starts, not ready, and keeps trying.
    */
   public void start() {
+    loadTicketKeys();
     refuseIfIdInUse();
     long wall = System.currentTimeMillis();
     try {
       // A previous run of this id may have crashed: its players are not here any more.
-      int stale = store.sweep(proxyId, 0, true).get(5, TimeUnit.SECONDS);
+      int stale = store.sweep(proxyId, 0, true, config.lastServerTtl() * 1000L).get(5, TimeUnit.SECONDS);
       if (stale > 0) {
         logger.info("Removed {} players left in the network by a previous run of {}", stale,
             proxyId);
@@ -287,7 +299,7 @@ public final class ClusterService implements AutoCloseable {
         Long last = sweepAttempts.get(p.id());
         if (last == null || now - last > DEAD_AFTER_MILLIS) {
           sweepAttempts.put(p.id(), now);
-          store.sweep(p.id(), DEAD_AFTER_MILLIS, false).thenAccept(n -> {
+          store.sweep(p.id(), DEAD_AFTER_MILLIS, false, config.lastServerTtl() * 1000L).thenAccept(n -> {
             if (n >= 0) {
               logger.info("Proxy {} is gone; released its {} players", p.id(), n);
             }
@@ -326,9 +338,11 @@ public final class ClusterService implements AutoCloseable {
    * @param uuid the player
    * @param name the player's name
    * @param ip the player's address
+   * @param properties the player's profile properties as JSON, for the shared profile cache
    * @return the session to pass to {@link #playerLeft} later, or the reason to deny the login
    */
-  public CompletableFuture<LoginResult> claimLogin(UUID uuid, String name, String ip) {
+  public CompletableFuture<LoginResult> claimLogin(UUID uuid, String name, String ip,
+      @Nullable String properties) {
     PlayerRecord record = new PlayerRecord(uuid, name, proxyId,
         ThreadLocalRandom.current().nextLong(), null, ip, System.currentTimeMillis());
     CompletableFuture<LoginResult> result = new CompletableFuture<>();
@@ -337,7 +351,7 @@ public final class ClusterService implements AutoCloseable {
       result.complete(LoginResult.denied(UNAVAILABLE));
       return result;
     }
-    new LoginClaim(record, result).attempt();
+    new LoginClaim(record, properties, result).attempt();
     return result;
   }
 
@@ -346,27 +360,32 @@ public final class ClusterService implements AutoCloseable {
    *
    * @param session the session, if allowed
    * @param denyReason why the login is denied, or null
+   * @param route the server the player should go to first (transfer or crashed proxy), or null
    */
-  public record LoginResult(long session, @Nullable Component denyReason) {
+  public record LoginResult(long session, @Nullable Component denyReason, @Nullable String route) {
     static LoginResult denied(Component reason) {
-      return new LoginResult(0, reason);
+      return new LoginResult(0, reason, null);
     }
   }
 
   private final class LoginClaim {
     private final PlayerRecord record;
+    private final @Nullable String properties;
     private final CompletableFuture<LoginResult> result;
     private final long start = System.currentTimeMillis();
     private long lastKick;
     private int failures;
 
-    LoginClaim(PlayerRecord record, CompletableFuture<LoginResult> result) {
+    LoginClaim(PlayerRecord record, @Nullable String properties,
+        CompletableFuture<LoginResult> result) {
       this.record = record;
+      this.properties = properties;
       this.result = result;
     }
 
     void attempt() {
-      store.claim(record, epoch, DEAD_AFTER_MILLIS).whenComplete(this::claimed);
+      store.claim(record, epoch, DEAD_AFTER_MILLIS, config.lastServerTtl() > 0)
+          .whenComplete(this::claimed);
     }
 
     private void retry(long delayMillis) {
@@ -383,7 +402,7 @@ public final class ClusterService implements AutoCloseable {
           logger.warn("Network store unreachable; letting {} in without a network check",
               record.name());
           pendingResync = true;
-          admitted();
+          admitted(null);
         } else {
           claimsUnavailable.increment();
           result.complete(LoginResult.denied(UNAVAILABLE));
@@ -391,7 +410,7 @@ public final class ClusterService implements AutoCloseable {
         return;
       }
       if (c.claimed()) {
-        admitted();
+        admitted(c.route());
         return;
       }
       if (!newestWins || now - start > KICK_WAIT_MILLIS) {
@@ -407,11 +426,18 @@ public final class ClusterService implements AutoCloseable {
       retry(100);
     }
 
-    private void admitted() {
+    private void admitted(@Nullable String storedRoute) {
       claimsOk.increment();
       Session s = new Session(record);
       sessions.put(record.uuid(), s);
-      result.complete(new LoginResult(record.session(), null));
+      TicketRoute ticket = ticketRoutes.remove(record.uuid());
+      String route = ticket != null && ticket.expires() > System.currentTimeMillis()
+          ? ticket.server() : storedRoute;
+      result.complete(new LoginResult(record.session(), null, route));
+      if (properties != null) {
+        store.putProfile(new NetworkStore.CachedProfile(record.uuid(), record.name(), properties),
+            config.profileCacheTtl() * 1000L).exceptionally(ex -> null);
+      }
       publish("msg:all", frame(JOIN, record.uuid(), record.name(), null, null, record.since()));
       host.fire(new NetworkPlayerJoinEvent(new VelocityNetworkPlayer(s.current(), actions)));
     }
@@ -564,6 +590,143 @@ public final class ClusterService implements AutoCloseable {
     return bus;
   }
 
+  /** Name of the cookie that carries the transfer ticket. */
+  public static final Key ROUTE_COOKIE = Key.key("spaceport", "route");
+
+  public boolean hasTicketKeys() {
+    return ticketKeys != null;
+  }
+
+  /** Where a ticket said a player goes; kept until its login reaches the claim. */
+  private record TicketRoute(String server, long expires) {
+  }
+
+  private void loadTicketKeys() {
+    Path file = Path.of(config.transferSecretFile());
+    try {
+      boolean created = !Files.exists(file);
+      ticketKeys = RouteTicket.Keys.load(file);
+      if (created) {
+        try {
+          Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException ignored) {
+          // not a POSIX file system
+        }
+        logger.warn("Created {} with a new transfer ticket key: copy it to every proxy of the"
+            + " network", file);
+      }
+    } catch (IOException | RuntimeException e) {
+      logger.error("Cannot read the transfer ticket keys from {}; transfers are off", file, e);
+    }
+  }
+
+  /**
+   * Whether drains transfer players (ticket keys loaded and a transfer address configured).
+   *
+   * @return true if players can be transferred
+   */
+  public boolean canTransfer() {
+    return ticketKeys != null && !config.transferHost().isEmpty();
+  }
+
+  /**
+   * Signs a ticket for a player about to be transferred, and leaves a route hint in the store for
+   * a client that does not bring the cookie back.
+   *
+   * @param uuid the player
+   * @param name its name
+   * @param server its backend server, or null
+   * @param ip its address
+   * @return the cookie payload, or null if there are no keys
+   */
+  public byte @Nullable [] issueTicket(UUID uuid, String name, @Nullable String server,
+      String ip) {
+    RouteTicket.Keys keys = ticketKeys;
+    if (keys == null) {
+      return null;
+    }
+    if (server != null) {
+      store.putRoute(uuid, server, 60_000).exceptionally(ex -> null);
+    }
+    return RouteTicket.issue(uuid, name, server == null ? "" : server, ip, proxyId,
+        System.currentTimeMillis()).sign(keys);
+  }
+
+  /**
+   * A ticket that passed every check.
+   *
+   * @param ticket the ticket
+   * @param properties the player's profile properties (JSON) from the shared cache, or null
+   */
+  public record Redeemed(RouteTicket ticket, @Nullable String properties) {
+  }
+
+  /**
+   * Checks a transfer ticket brought back by a client before encryption: signature, key, expiry,
+   * the name and uuid the client logs in with, its address, and that its nonce was never used.
+   * A good ticket's server becomes the player's first server.
+   *
+   * @param cookie the cookie payload, or null if the client had none
+   * @param ip the client's address
+   * @param name the name it logs in with
+   * @param holder the uuid it logs in with, or null
+   * @return the redeemed ticket, or empty: then the normal login applies
+   */
+  public CompletableFuture<Optional<Redeemed>> redeem(byte @Nullable [] cookie, String ip,
+      String name, @Nullable UUID holder) {
+    RouteTicket.Keys keys = ticketKeys;
+    if (keys == null || cookie == null) {
+      return CompletableFuture.completedFuture(Optional.empty());
+    }
+    long now = System.currentTimeMillis();
+    Optional<RouteTicket> verified = RouteTicket.verify(cookie, keys, now)
+        .filter(t -> t.name().equalsIgnoreCase(name) && t.ip().equals(ip)
+            && (holder == null || holder.equals(t.uuid())));
+    if (verified.isEmpty()) {
+      ticketsRejected.increment();
+      return CompletableFuture.completedFuture(Optional.empty());
+    }
+    RouteTicket t = verified.get();
+    return store.useNonce(t.nonce(), RouteTicket.LIFETIME_MILLIS + RouteTicket.SKEW_MILLIS)
+        .thenCompose(first -> {
+          if (!first) {
+            ticketsRejected.increment();
+            return CompletableFuture.completedFuture(Optional.<Redeemed>empty());
+          }
+          return store.profile(t.uuid()).thenApply(p -> {
+            ticketsAccepted.increment();
+            if (!t.server().isEmpty()) {
+              ticketRoutes.put(t.uuid(), new TicketRoute(t.server(), now + 60_000));
+            }
+            return Optional.of(new Redeemed(t, p.map(NetworkStore.CachedProfile::properties)
+                .orElse(null)));
+          });
+        })
+        .exceptionally(ex -> {
+          ticketsRejected.increment();
+          return Optional.empty();
+        });
+  }
+
+  /** A transferred player skipped the Mojang session check thanks to its ticket. */
+  public void noteAuthSkipped() {
+    authSkipped.increment();
+  }
+
+  /**
+   * Gives up a player that is about to be transferred, so the next proxy can claim it at once.
+   *
+   * @param uuid the player
+   * @return completes when released (or failed)
+   */
+  public CompletableFuture<Void> releaseForTransfer(UUID uuid) {
+    Session s = sessions.get(uuid);
+    if (s == null) {
+      return CompletableFuture.completedFuture(null);
+    }
+    return store.release(uuid, proxyId, s.record.session()).handle((ok, ex) -> null);
+  }
+
   public String proxyId() {
     return proxyId;
   }
@@ -650,14 +813,24 @@ public final class ClusterService implements AutoCloseable {
    * @param tickMicrosAvg smoothed tick round trip
    * @param busRequests requests sent to other proxies
    * @param busTimeouts requests that got no answer
+   * @param ticketsAccepted transfer tickets that passed every check
+   * @param ticketsRejected transfer tickets that were missing nothing but failed a check
+   * @param authSkipped Mojang session checks skipped thanks to a ticket
    */
   public record Stats(long claimsOk, long claimsDenied, long claimsUnavailable, long storeErrors,
-                      long tickMicros, long tickMicrosAvg, long busRequests, long busTimeouts) {
+                      long tickMicros, long tickMicrosAvg, long busRequests, long busTimeouts,
+                      long ticketsAccepted, long ticketsRejected, long authSkipped) {
   }
 
+  /**
+   * Returns the counters for /metrics.
+   *
+   * @return the counters
+   */
   public Stats stats() {
     return new Stats(claimsOk.sum(), claimsDenied.sum(), claimsUnavailable.sum(), storeErrors.sum(),
-        tickMicros, tickMicrosAvg, bus.requests(), bus.timeouts());
+        tickMicros, tickMicrosAvg, bus.requests(), bus.timeouts(), ticketsAccepted.sum(),
+        ticketsRejected.sum(), authSkipped.sum());
   }
 
   /**
@@ -680,7 +853,7 @@ public final class ClusterService implements AutoCloseable {
   public void close() {
     timer.shutdownNow();
     try {
-      store.sweep(proxyId, 0, true).get(2, TimeUnit.SECONDS);
+      store.sweep(proxyId, 0, true, config.lastServerTtl() * 1000L).get(2, TimeUnit.SECONDS);
     } catch (Exception e) {
       logger.warn("Could not remove this proxy from the network store: {}", rootMessage(e));
     }

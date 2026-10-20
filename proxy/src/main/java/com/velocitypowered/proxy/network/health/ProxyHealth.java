@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -59,6 +60,9 @@ public final class ProxyHealth implements AutoCloseable {
   });
   private volatile boolean started;
   private volatile @Nullable CompletableFuture<Void> drain;
+  private volatile @Nullable TransferDrain transfers;
+  private volatile @Nullable CompletableFuture<Void> transfersDone;
+  private final LongAdder transferred = new LongAdder();
   private volatile double loginsPerSecond;
   private int sample;
   private volatile @Nullable HttpServer http;
@@ -167,6 +171,7 @@ public final class ProxyHealth implements AutoCloseable {
     }
     CompletableFuture<Void> marked = new CompletableFuture<>();
     drain = marked;
+    long deadline = System.currentTimeMillis() + config().drainTimeout() * 1000L;
     int wait = Math.min(config().healthInterval(), config().drainTimeout());
     logger.info("Draining: not ready any more; marking this proxy draining in {} s", wait);
     timer.schedule(() -> {
@@ -178,9 +183,35 @@ public final class ProxyHealth implements AutoCloseable {
         cluster.setDraining(true);
       }
       logger.info("Draining: marked draining in the network");
+      if (cluster != null && cluster.canTransfer()) {
+        transfers = new TransferDrain(server, cluster, timer, transferred, deadline);
+        transfersDone = transfers.start();
+      }
       marked.complete(null);
     }, wait, TimeUnit.SECONDS);
     return marked;
+  }
+
+  /**
+   * A backend answered {@code spaceport:saved} for a player.
+   *
+   * @param player the player
+   */
+  public void saved(UUID player) {
+    TransferDrain running = transfers;
+    if (running != null) {
+      running.saved(player);
+    }
+  }
+
+  /**
+   * Returns when the drain's transfers are over.
+   *
+   * @return completes when nobody is left or the drain timed out; done at once without a drain
+   */
+  public CompletableFuture<Void> drained() {
+    CompletableFuture<Void> moving = transfersDone;
+    return moving == null ? CompletableFuture.completedFuture(null) : moving;
   }
 
   /** Stops a drain: ready again (if nothing else is wrong) and no longer marked draining. */
@@ -191,6 +222,11 @@ public final class ProxyHealth implements AutoCloseable {
     }
     drain = null;
     current.cancel(false);
+    TransferDrain running = transfers;
+    if (running != null) {
+      running.cancel();
+      transfers = null;
+    }
     ClusterService cluster = server.getCluster();
     if (cluster != null) {
       cluster.setDraining(false);
@@ -208,7 +244,14 @@ public final class ProxyHealth implements AutoCloseable {
       return;
     }
     try {
+      long deadline = System.currentTimeMillis() + Math.max(1, config().drainTimeout()) * 1000L;
       drain().get(Math.max(1, config().drainTimeout()), TimeUnit.SECONDS);
+      // Phase 4: wait for the transfers (players that cannot be transferred are disconnected
+      // with a reconnect message by the drain, the rest by the shutdown after the timeout).
+      CompletableFuture<Void> moving = transfersDone;
+      if (moving != null) {
+        moving.get(Math.max(0, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
+      }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     } catch (Exception e) {
@@ -232,6 +275,8 @@ public final class ProxyHealth implements AutoCloseable {
     gauge(out, "spaceport_proxies", "live proxies in the network, this one included",
         server.getNetwork().getProxies().size());
     counter(out, "spaceport_logins_total", "logins completed on this proxy", logins.sum());
+    counter(out, "spaceport_transfers_total", "players transferred away by drains",
+        transferred.sum());
     gauge(out, "spaceport_logins_per_second", "logins per second over the last 10 s",
         loginsPerSecond);
     ClusterService cluster = server.getCluster();
@@ -253,6 +298,12 @@ public final class ProxyHealth implements AutoCloseable {
           s.busRequests());
       counter(out, "spaceport_bus_timeouts_total", "requests to other proxies with no answer",
           s.busTimeouts());
+      counter(out, "spaceport_tickets_accepted_total", "transfer tickets accepted",
+          s.ticketsAccepted());
+      counter(out, "spaceport_tickets_rejected_total", "transfer tickets that failed a check",
+          s.ticketsRejected());
+      counter(out, "spaceport_auth_skipped_total", "Mojang session checks skipped with a ticket",
+          s.authSkipped());
     }
     return out.toString();
   }

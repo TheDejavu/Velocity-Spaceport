@@ -31,6 +31,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * In-memory {@link NetworkStore} with the same rules as {@link RedisStore}. Several proxies in one
@@ -50,6 +51,11 @@ public final class LocalStore implements NetworkStore {
   private final Map<String, Set<UUID>> members = new HashMap<>();
   private final Map<UUID, Owned> players = new HashMap<>();
   private final Map<String, UUID> names = new HashMap<>();
+  private final Map<UUID, Expiring> routes = new HashMap<>();
+  private final Map<UUID, Expiring> lastServers = new HashMap<>();
+  private final Map<String, Long> nonces = new HashMap<>();
+  private final Map<UUID, CachedProfile> profiles = new HashMap<>();
+  private final Map<String, UUID> profileNames = new HashMap<>();
   private final Map<String, List<Consumer<byte[]>>> handlers = new HashMap<>();
   private String generation;
   private long epoch;
@@ -78,6 +84,11 @@ public final class LocalStore implements NetworkStore {
     members.clear();
     players.clear();
     names.clear();
+    routes.clear();
+    lastServers.clear();
+    nonces.clear();
+    profiles.clear();
+    profileNames.clear();
     generation = null;
     epoch = 0;
   }
@@ -130,17 +141,20 @@ public final class LocalStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Claim> claim(PlayerRecord p, long claimEpoch, long deadAfterMillis) {
+  public CompletableFuture<Claim> claim(PlayerRecord p, long claimEpoch, long deadAfterMillis,
+      boolean lastServer) {
     return run(() -> {
       long now = clock.getAsLong();
       Owned cur = players.get(p.uuid());
       String owner = cur == null ? null : cur.record().proxy();
+      String crashed = null;
       if (owner != null && !owner.equals(p.proxy())) {
         ProxyEntry e = live(owner, now);
         if (e != null && now - e.seen() < deadAfterMillis) {
           return new Claim(false, owner);
         }
         members.getOrDefault(owner, new HashSet<>()).remove(p.uuid());
+        crashed = lastServer ? cur.record().server() : null;
       }
       if (owner != null && owner.equals(p.proxy()) && cur.epoch() > claimEpoch) {
         return new Claim(false, owner);
@@ -148,7 +162,9 @@ public final class LocalStore implements NetworkStore {
       players.put(p.uuid(), new Owned(p, claimEpoch));
       names.put(p.name().toLowerCase(Locale.ROOT), p.uuid());
       members.computeIfAbsent(p.proxy(), k -> new HashSet<>()).add(p.uuid());
-      return new Claim(true, owner);
+      String route = take(routes, p.uuid(), now);
+      String last = take(lastServers, p.uuid(), now);
+      return new Claim(true, owner, route != null ? route : last != null ? last : crashed);
     });
   }
 
@@ -191,7 +207,8 @@ public final class LocalStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force) {
+  public CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force,
+      long lastServerTtlMillis) {
     return run(() -> {
       long now = clock.getAsLong();
       ProxyEntry e = live(proxyId, now);
@@ -202,6 +219,9 @@ public final class LocalStore implements NetworkStore {
       for (UUID uuid : members.getOrDefault(proxyId, Set.of())) {
         Owned cur = players.get(uuid);
         if (cur != null && cur.record().proxy().equals(proxyId)) {
+          if (cur.record().server() != null && lastServerTtlMillis > 0) {
+            lastServers.put(uuid, new Expiring(cur.record().server(), now + lastServerTtlMillis));
+          }
           remove(uuid);
           n++;
         }
@@ -220,6 +240,55 @@ public final class LocalStore implements NetworkStore {
   @Override
   public CompletableFuture<Optional<UUID>> uuidOf(String name) {
     return run(() -> Optional.ofNullable(names.get(name.toLowerCase(Locale.ROOT))));
+  }
+
+  private record Expiring(String value, long expires) {
+  }
+
+  private static @Nullable String take(Map<UUID, Expiring> map, UUID key, long now) {
+    Expiring e = map.remove(key);
+    return e == null || e.expires() <= now ? null : e.value();
+  }
+
+  @Override
+  public CompletableFuture<Void> putRoute(UUID player, String server, long ttlMillis) {
+    return run(() -> {
+      routes.put(player, new Expiring(server, clock.getAsLong() + ttlMillis));
+      return null;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Boolean> useNonce(String nonce, long ttlMillis) {
+    return run(() -> {
+      long now = clock.getAsLong();
+      Long until = nonces.get(nonce);
+      if (until != null && until > now) {
+        return false;
+      }
+      nonces.put(nonce, now + ttlMillis);
+      return true;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Void> putProfile(CachedProfile profile, long ttlMillis) {
+    return run(() -> {
+      profiles.put(profile.uuid(), profile);
+      profileNames.put(profile.name().toLowerCase(Locale.ROOT), profile.uuid());
+      return null;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profile(UUID player) {
+    return run(() -> Optional.ofNullable(profiles.get(player)));
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profile(String name) {
+    return run(() -> Optional.ofNullable(profileNames.get(name.toLowerCase(Locale.ROOT)))
+        .map(profiles::get));
   }
 
   @Override

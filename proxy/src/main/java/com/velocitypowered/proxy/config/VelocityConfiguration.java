@@ -1056,12 +1056,25 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param healthBind address of the health/metrics HTTP listener, empty for none
    * @param healthInterval seconds a load balancer needs to notice a failing health check
    * @param drainTimeout seconds a drain may take at most
+   * @param transferHost host players are sent to when this proxy drains (the load balancer); empty
+   *     disables transfers (players are disconnected with a reconnect message instead)
+   * @param transferPort port for {@code transferHost}
+   * @param drainRate players transferred per second while draining
+   * @param transferSecretFile file with the keys that sign transfer tickets, shared by all proxies
+   * @param skipAuthWithTicket whether a transferred player with a valid ticket skips Mojang
+   * @param profileCacheTtl seconds a player's profile (name, skin) stays in the shared cache
+   * @param lastServerTtl seconds a player whose proxy crashed is sent back to its last server
+   * @param drainWaitForSave whether to wait for a backend {@code spaceport:saved} before a transfer
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
-                              String healthBind, int healthInterval, int drainTimeout) {
+                              String healthBind, int healthInterval, int drainTimeout,
+                              String transferHost, int transferPort, int drainRate,
+                              String transferSecretFile, boolean skipAuthWithTicket,
+                              int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
-        "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120);
+        "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50,
+        "network-secret.key", true, 21600, 300, false);
 
     /**
      * Validates the choices.
@@ -1107,7 +1120,15 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("redis-down-policy", DEFAULT.redisDownPolicy()),
           config.getOrElse("health-bind", DEFAULT.healthBind()),
           config.getIntOrElse("health-interval", DEFAULT.healthInterval()),
-          config.getIntOrElse("drain-timeout", DEFAULT.drainTimeout()));
+          config.getIntOrElse("drain-timeout", DEFAULT.drainTimeout()),
+          config.getOrElse("transfer-host", DEFAULT.transferHost()),
+          config.getIntOrElse("transfer-port", DEFAULT.transferPort()),
+          config.getIntOrElse("drain-rate", DEFAULT.drainRate()),
+          config.getOrElse("transfer-secret-file", DEFAULT.transferSecretFile()),
+          config.getOrElse("skip-auth-with-ticket", DEFAULT.skipAuthWithTicket()),
+          config.getIntOrElse("profile-cache-ttl", DEFAULT.profileCacheTtl()),
+          config.getIntOrElse("last-server-ttl", DEFAULT.lastServerTtl()),
+          config.getOrElse("drain-wait-for-save", DEFAULT.drainWaitForSave()));
     }
   }
 }

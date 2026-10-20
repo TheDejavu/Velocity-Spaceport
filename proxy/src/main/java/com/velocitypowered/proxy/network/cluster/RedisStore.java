@@ -21,6 +21,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.SetArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -98,15 +99,18 @@ public final class RedisStore implements NetworkStore {
       return {v[1], tostring(now - tonumber(v[2])), v[3] or '', v[4] or '', v[5] or '0'}
       """;
 
-  // KEYS: player hash, name key, own members set. ARGV: proxy, epoch, session, name, server, ip,
-  // since, deadAfter, proxy prefix, members prefix, uuid.
+  // KEYS: player hash, name key, own members set, route hint, last server. ARGV: proxy, epoch,
+  // session, name, server, ip, since, deadAfter, proxy prefix, members prefix, uuid,
+  // last-server routing on (1 or 0).
   private static final String CLAIM = NOW + """
-      local cur = redis.call('HMGET', KEYS[1], 'proxy', 'epoch')
+      local cur = redis.call('HMGET', KEYS[1], 'proxy', 'epoch', 'server')
       local owner = cur[1]
+      local crashed = ''
       if owner and owner ~= ARGV[1] then
         local seen = redis.call('HGET', ARGV[9] .. owner, 'seen')
         if seen and now - tonumber(seen) < tonumber(ARGV[8]) then return {0, owner} end
         redis.call('SREM', ARGV[10] .. owner, ARGV[11])
+        if ARGV[12] == '1' then crashed = cur[3] or '' end
       end
       if owner == ARGV[1] and tonumber(cur[2]) > tonumber(ARGV[2]) then return {0, owner} end
       redis.call('DEL', KEYS[1])
@@ -114,7 +118,9 @@ public final class RedisStore implements NetworkStore {
           'name', ARGV[4], 'server', ARGV[5], 'ip', ARGV[6], 'since', ARGV[7])
       redis.call('SET', KEYS[2], ARGV[11])
       redis.call('SADD', KEYS[3], ARGV[11])
-      return {1, owner or ''}
+      local route = redis.call('GET', KEYS[4]) or redis.call('GET', KEYS[5]) or crashed
+      redis.call('DEL', KEYS[4], KEYS[5])
+      return {1, owner or '', route}
       """;
 
   // KEYS: player hash. ARGV: proxy, session, server.
@@ -136,16 +142,19 @@ public final class RedisStore implements NetworkStore {
       """;
 
   // KEYS: members set, proxies set, proxy hash. ARGV: id, deadAfter, force, player prefix,
-  // name prefix.
+  // name prefix, last-server prefix, last-server ttl (ms, 0: none).
   private static final String SWEEP = NOW + """
       local seen = redis.call('HGET', KEYS[3], 'seen')
       if ARGV[3] ~= '1' and seen and now - tonumber(seen) < tonumber(ARGV[2]) then return -1 end
       local n = 0
       for _, uuid in ipairs(redis.call('SMEMBERS', KEYS[1])) do
         local key = ARGV[4] .. '{' .. uuid .. '}'
-        local cur = redis.call('HMGET', key, 'proxy', 'name')
+        local cur = redis.call('HMGET', key, 'proxy', 'name', 'server')
         if cur[1] == ARGV[1] then
           redis.call('DEL', key)
+          if cur[3] and cur[3] ~= '' and tonumber(ARGV[7]) > 0 then
+            redis.call('SET', ARGV[6] .. '{' .. uuid .. '}', cur[3], 'PX', ARGV[7])
+          end
           if cur[2] then
             local nk = ARGV[5] .. string.lower(cur[2])
             if redis.call('GET', nk) == uuid then redis.call('DEL', nk) end
@@ -252,6 +261,10 @@ public final class RedisStore implements NetworkStore {
     return prefix + "player:{" + player + "}";
   }
 
+  private String routeKey(UUID player) {
+    return prefix + "route:{" + player + "}";
+  }
+
   private String nameKey(String name) {
     return prefix + "name:" + name.toLowerCase(Locale.ROOT);
   }
@@ -289,15 +302,20 @@ public final class RedisStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Claim> claim(PlayerRecord p, long epoch, long deadAfterMillis) {
+  public CompletableFuture<Claim> claim(PlayerRecord p, long epoch, long deadAfterMillis,
+      boolean lastServer) {
     return call(redis -> redis.<List<Object>>eval(CLAIM, ScriptOutputType.MULTI,
-            new String[] {playerKey(p.uuid()), nameKey(p.name()), net + "members:" + p.proxy()},
+            new String[] {playerKey(p.uuid()), nameKey(p.name()), net + "members:" + p.proxy(),
+                routeKey(p.uuid()), prefix + "last:{" + p.uuid() + "}"},
             p.proxy(), Long.toString(epoch), Long.toString(p.session()), p.name(),
             p.server() == null ? "" : p.server(), p.ip(), Long.toString(p.since()),
-            Long.toString(deadAfterMillis), net + "proxy:", net + "members:", p.uuid().toString()))
+            Long.toString(deadAfterMillis), net + "proxy:", net + "members:", p.uuid().toString(),
+            lastServer ? "1" : "0"))
         .thenApply(r -> {
           String owner = (String) r.get(1);
-          return new Claim((Long) r.get(0) == 1, owner.isEmpty() ? null : owner);
+          String route = r.size() > 2 ? (String) r.get(2) : "";
+          return new Claim((Long) r.get(0) == 1, owner.isEmpty() ? null : owner,
+              route.isEmpty() ? null : route);
         });
   }
 
@@ -320,11 +338,12 @@ public final class RedisStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force) {
+  public CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force,
+      long lastServerTtlMillis) {
     return call(redis -> redis.<Long>eval(SWEEP, ScriptOutputType.INTEGER,
             new String[] {net + "members:" + proxyId, net + "proxies", net + "proxy:" + proxyId},
             proxyId, Long.toString(deadAfterMillis), force ? "1" : "0", prefix + "player:",
-            prefix + "name:"))
+            prefix + "name:", prefix + "last:", Long.toString(lastServerTtlMillis)))
         .thenApply(Long::intValue);
   }
 
@@ -345,6 +364,44 @@ public final class RedisStore implements NetworkStore {
   public CompletableFuture<Optional<UUID>> uuidOf(String name) {
     return call(redis -> redis.get(nameKey(name)))
         .thenApply(s -> Optional.ofNullable(s).map(UUID::fromString));
+  }
+
+  @Override
+  public CompletableFuture<Void> putRoute(UUID player, String server, long ttlMillis) {
+    return call(redis -> redis.set(routeKey(player), server, SetArgs.Builder.px(ttlMillis)))
+        .thenApply(ok -> null);
+  }
+
+  @Override
+  public CompletableFuture<Boolean> useNonce(String nonce, long ttlMillis) {
+    return call(redis -> redis.set(prefix + "nonce:" + nonce, "1",
+        SetArgs.Builder.nx().px(ttlMillis))).thenApply("OK"::equals);
+  }
+
+  @Override
+  public CompletableFuture<Void> putProfile(CachedProfile profile, long ttlMillis) {
+    String key = prefix + "profile:{" + profile.uuid() + "}";
+    String nameKey = prefix + "pname:" + profile.name().toLowerCase(Locale.ROOT);
+    return call(redis -> redis.hset(key, Map.of("name", profile.name(),
+            "properties", profile.properties())))
+        .thenCompose(n -> call(redis -> redis.pexpire(key, ttlMillis)))
+        .thenCompose(ok -> call(redis -> redis.set(nameKey, profile.uuid().toString(),
+            SetArgs.Builder.px(ttlMillis))))
+        .thenApply(ok -> null);
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profile(UUID player) {
+    return call(redis -> redis.hgetall(prefix + "profile:{" + player + "}")).thenApply(h ->
+        h == null || h.get("name") == null ? Optional.empty()
+            : Optional.of(new CachedProfile(player, h.get("name"), h.get("properties"))));
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profile(String name) {
+    return call(redis -> redis.get(prefix + "pname:" + name.toLowerCase(Locale.ROOT)))
+        .thenCompose(id -> id == null ? CompletableFuture.completedFuture(Optional.empty())
+            : profile(UUID.fromString(id)));
   }
 
   @Override

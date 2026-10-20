@@ -239,3 +239,30 @@ health-interval = 5
 # Seconds a drain (/spaceport drain, or shutting down) may take at most. Your service manager's
 # stop timeout must be longer than this.
 drain-timeout = 120
+
+# Where players are sent when this proxy drains (on /spaceport drain or shutdown): the address of
+# your load balancer, which only sends them to proxies that are not draining. Needs Minecraft
+# 1.20.5+ clients and accepts-transfers = true on every proxy. Empty: no transfers; players are
+# disconnected with a reconnect message instead.
+transfer-host = ""
+transfer-port = 25565
+
+# Players transferred per second while draining.
+drain-rate = 50
+
+# Keys that sign transfer tickets (created if missing). Copy the same file to every proxy; it is
+# separate from the forwarding secret. Format: one "id=base64key" per line, the first one signs.
+transfer-secret-file = "network-secret.key"
+
+# A transferred player with a valid ticket skips the second Mojang session check (online mode).
+skip-auth-with-ticket = true
+
+# Seconds a player's profile (name, uuid, skin) stays in the shared cache.
+profile-cache-ttl = 21600
+
+# Seconds during which players of a crashed proxy are sent back to the server they were on.
+last-server-ttl = 300
+
+# Before transferring a player, ask its backend server to save it (plugin message
+# "spaceport:save") and wait up to 2 seconds for "spaceport:saved".
+drain-wait-for-save = false

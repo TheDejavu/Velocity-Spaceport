@@ -55,6 +55,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A session handler that is activated to complete the login phase.
@@ -70,6 +71,7 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
   private @MonotonicNonNull ConnectedPlayer connectedPlayer;
   private final boolean onlineMode;
   private State loginState = State.START; // 1.20.2+
+  private @Nullable String networkRoute; // Spaceport: first server from a transfer or crash
   private final String serverIdHash;
 
   AuthSessionHandler(VelocityServer server, LoginInboundConnection inbound,
@@ -236,7 +238,8 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
       }
       // Spaceport: network-wide duplicate check; the player is owned by this proxy afterwards.
       cluster.claimLogin(player.getUniqueId(), player.getUsername(),
-              player.getRemoteAddress().getAddress().getHostAddress())
+              player.getRemoteAddress().getAddress().getHostAddress(),
+              VelocityServer.GENERAL_GSON.toJson(player.getGameProfileProperties()))
           .whenCompleteAsync((result, ex) -> {
             if (ex != null) {
               logger.error("Network login check failed for {}", player, ex);
@@ -247,6 +250,7 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
               cluster.playerLeft(player.getUniqueId(), result.session());
             } else {
               player.setNetworkSession(result.session());
+              this.networkRoute = result.route();
               finishLogin(player);
             }
           }, mcConnection.eventLoop());
@@ -286,6 +290,13 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
 
   private CompletableFuture<Void> connectToInitialServer(ConnectedPlayer player) {
     Optional<RegisteredServer> initialFromConfig = player.getNextServerToTry();
+    if (networkRoute != null) {
+      // Spaceport: back to the server the player was on (plugins can still change it)
+      Optional<RegisteredServer> routed = server.getServer(networkRoute);
+      if (routed.isPresent()) {
+        initialFromConfig = routed;
+      }
+    }
     PlayerChooseInitialServerEvent event =
         new PlayerChooseInitialServerEvent(player, initialFromConfig.orElse(null));
 

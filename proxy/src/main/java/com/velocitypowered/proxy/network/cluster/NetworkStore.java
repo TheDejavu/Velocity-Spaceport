@@ -78,9 +78,23 @@ public interface NetworkStore extends AutoCloseable {
    * @param player the record to write, {@code proxy} is this proxy
    * @param epoch this proxy's epoch
    * @param deadAfterMillis how long a proxy may be silent before its players can be taken
+   * @param lastServer whether a player taken from a dead proxy is routed back to its server
    * @return the result
    */
-  CompletableFuture<Claim> claim(PlayerRecord player, long epoch, long deadAfterMillis);
+  CompletableFuture<Claim> claim(PlayerRecord player, long epoch, long deadAfterMillis,
+      boolean lastServer);
+
+  /**
+   * A claim without last-server routing.
+   *
+   * @param player the record to write
+   * @param epoch this proxy's epoch
+   * @param deadAfterMillis how long a proxy may be silent before its players can be taken
+   * @return the result
+   */
+  default CompletableFuture<Claim> claim(PlayerRecord player, long epoch, long deadAfterMillis) {
+    return claim(player, epoch, deadAfterMillis, false);
+  }
 
   /**
    * Records the backend server of a player this proxy owns with this session.
@@ -111,9 +125,11 @@ public interface NetworkStore extends AutoCloseable {
    * @param proxyId the proxy
    * @param deadAfterMillis how long it must have been silent
    * @param force remove even if alive (a proxy leaving on shutdown)
+   * @param lastServerTtlMillis how long removed players are routed back to their server (0: not)
    * @return the number of players removed, or -1 if the proxy is alive
    */
-  CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force);
+  CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force,
+      long lastServerTtlMillis);
 
   CompletableFuture<Optional<PlayerRecord>> player(UUID player);
 
@@ -125,6 +141,48 @@ public interface NetworkStore extends AutoCloseable {
    * @return the counter
    */
   CompletableFuture<Long> nextEpoch();
+
+  /**
+   * Remembers where a player is going (a transfer), for {@link #claim} on the next proxy.
+   *
+   * @param player the player
+   * @param server the backend server
+   * @param ttlMillis how long the hint lives
+   * @return completes when written
+   */
+  CompletableFuture<Void> putRoute(UUID player, String server, long ttlMillis);
+
+  /**
+   * Uses up a transfer ticket's nonce.
+   *
+   * @param nonce the nonce
+   * @param ttlMillis how long to remember it (at least the ticket's lifetime)
+   * @return true the first time, false if it was used before
+   */
+  CompletableFuture<Boolean> useNonce(String nonce, long ttlMillis);
+
+  /**
+   * Caches a player's profile for every proxy.
+   *
+   * @param profile the profile
+   * @param ttlMillis how long it stays
+   * @return completes when written
+   */
+  CompletableFuture<Void> putProfile(CachedProfile profile, long ttlMillis);
+
+  CompletableFuture<Optional<CachedProfile>> profile(UUID player);
+
+  CompletableFuture<Optional<CachedProfile>> profile(String name);
+
+  /**
+   * A player's profile in the shared cache.
+   *
+   * @param uuid the player
+   * @param name its name
+   * @param properties its profile properties (skin) as JSON
+   */
+  record CachedProfile(UUID uuid, String name, String properties) {
+  }
 
   CompletableFuture<Void> publish(String channel, byte[] payload);
 
@@ -153,8 +211,13 @@ public interface NetworkStore extends AutoCloseable {
    *
    * @param claimed whether this proxy owns the player now
    * @param owner the live owner if not claimed, else the previous owner or null
+   * @param route where the player should go (a transfer hint or the last server of a crashed
+   *     proxy), or null; taken from the store with the claim
    */
-  record Claim(boolean claimed, @Nullable String owner) {
+  record Claim(boolean claimed, @Nullable String owner, @Nullable String route) {
+    public Claim(boolean claimed, @Nullable String owner) {
+      this(claimed, owner, null);
+    }
   }
 
   /**

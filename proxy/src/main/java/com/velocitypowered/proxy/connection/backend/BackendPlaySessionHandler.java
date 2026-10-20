@@ -306,6 +306,11 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
     if (bungeecordMessageResponder.process(packet)) {
       return true;
     }
+    if ("spaceport:saved".equals(packet.getChannel())) {
+      // Spaceport: the backend saved the player a drain is about to transfer
+      server.getHealth().saved(serverConn.getPlayer().getUniqueId());
+      return true;
+    }
 
     // Register and unregister packets are simply forwarded to the client as-is.
     if (PluginMessageUtil.isRegister(packet) || PluginMessageUtil.isUnregister(packet)) {

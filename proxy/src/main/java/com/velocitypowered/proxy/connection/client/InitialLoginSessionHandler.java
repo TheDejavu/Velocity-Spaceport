@@ -27,6 +27,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.primitives.Longs;
 import com.velocitypowered.api.event.connection.PreLoginEvent;
 import com.velocitypowered.api.event.connection.PreLoginEvent.PreLoginComponentResult;
+import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
@@ -34,12 +35,16 @@ import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
+import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.cluster.RouteTicket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
+import com.velocitypowered.proxy.protocol.packet.ClientboundCookieRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.EncryptionRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.EncryptionResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.LoginPluginResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.ServerLoginPacket;
+import com.velocitypowered.proxy.protocol.packet.ServerboundCookieResponsePacket;
 import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
 import java.net.InetSocketAddress;
@@ -52,12 +57,14 @@ import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Handles authenticating the player to Mojang's servers.
@@ -81,6 +88,9 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
   private byte[] verify = EMPTY_BYTE_ARRAY;
   private LoginState currentState = LoginState.LOGIN_PACKET_EXPECTED;
   private boolean offlineEncryption;
+  // Spaceport: a transferred player's ticket check before encryption
+  private @MonotonicNonNull PreLoginComponentResult preLoginResult;
+  private @Nullable GameProfile ticketProfile;
   private final boolean forceKeyAuthentication;
 
   InitialLoginSessionHandler(VelocityServer server, MinecraftConnection mcConnection,
@@ -147,28 +157,20 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
         }
 
         mcConnection.eventLoop().execute(() -> {
-          if (!result.isForceOfflineMode()
-              && (server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed())) {
-            // Request encryption.
-            EncryptionRequestPacket request = generateEncryptionRequest();
-            this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
-            mcConnection.write(request);
-            this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
-          } else if (OFFLINE_ENCRYPTION
-              && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)) {
-            // Spaceport: encrypt offline-mode connections too. 1.20.5+ clients skip the Mojang
-            // session call when told not to authenticate.
-            EncryptionRequestPacket request = generateEncryptionRequest();
-            request.setShouldAuthenticate(false);
-            this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
-            this.offlineEncryption = true;
-            mcConnection.write(request);
-            this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
-          } else {
-            mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
-                new AuthSessionHandler(server, inbound,
-                    GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+          ClusterService cluster = server.getCluster();
+          if (cluster != null && cluster.hasTicketKeys()
+              && inbound.getHandshakeIntent() == HandshakeIntent.TRANSFER
+              && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)
+              && !result.isForceOfflineMode()) {
+            // Spaceport: a transferred client may bring a ticket from the proxy it came from.
+            // It has to be read before encryption: a client told not to authenticate cannot be
+            // checked with Mojang afterwards. The ticket is single use and bound to the address.
+            this.preLoginResult = result;
+            this.currentState = LoginState.COOKIE_REQUESTED;
+            mcConnection.write(new ClientboundCookieRequestPacket(ClusterService.ROUTE_COOKIE));
+            return;
           }
+          continueLogin(result);
         });
       });
     }, mcConnection.eventLoop()).exceptionally((ex) -> {
@@ -176,6 +178,48 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       return null;
     });
 
+    return true;
+  }
+
+  @Override
+  public boolean handle(ServerboundCookieResponsePacket packet) {
+    if (currentState != LoginState.COOKIE_REQUESTED
+        || !packet.getKey().equals(ClusterService.ROUTE_COOKIE)) {
+      mcConnection.close(true);
+      return true;
+    }
+    this.currentState = LoginState.LOGIN_PACKET_RECEIVED;
+    ClusterService cluster = server.getCluster();
+    String ip = ((InetSocketAddress) mcConnection.getRemoteAddress()).getAddress()
+        .getHostAddress();
+    cluster.redeem(packet.getPayload(), ip, login.getUsername(), login.getHolderUuid())
+        .thenAcceptAsync(redeemed -> {
+          if (mcConnection.isClosed()) {
+            return;
+          }
+          PreLoginComponentResult result = this.preLoginResult;
+          boolean online = server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed();
+          if (redeemed.isPresent() && online
+              && server.getConfiguration().getNetworkConfig().skipAuthWithTicket()) {
+            RouteTicket ticket = redeemed.get().ticket();
+            String properties = redeemed.get().properties();
+            this.ticketProfile = new GameProfile(ticket.uuid(), ticket.name(), properties == null
+                ? List.of() : List.of(GENERAL_GSON.fromJson(properties,
+                    GameProfile.Property[].class)));
+            EncryptionRequestPacket request = generateEncryptionRequest();
+            request.setShouldAuthenticate(false);
+            this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
+            mcConnection.write(request);
+            this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+            return;
+          }
+          continueLogin(result);
+        }, mcConnection.eventLoop())
+        .exceptionally(ex -> {
+          logger.error("Transfer ticket check failed for {}", login.getUsername(), ex);
+          mcConnection.close(true);
+          return null;
+        });
     return true;
   }
 
@@ -222,6 +266,13 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
         mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
             new AuthSessionHandler(server, inbound,
                 GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+        return true;
+      }
+      if (ticketProfile != null) {
+        // Spaceport: identity from the transfer ticket, no second Mojang check
+        server.getCluster().noteAuthSkipped();
+        mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+            new AuthSessionHandler(server, inbound, ticketProfile, true, null));
         return true;
       }
 
@@ -291,6 +342,31 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     return true;
   }
 
+  private void continueLogin(PreLoginComponentResult result) {
+    if (!result.isForceOfflineMode()
+        && (server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed())) {
+      // Request encryption.
+      EncryptionRequestPacket request = generateEncryptionRequest();
+      this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
+      mcConnection.write(request);
+      this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+    } else if (OFFLINE_ENCRYPTION
+        && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)) {
+      // Spaceport: encrypt offline-mode connections too. 1.20.5+ clients skip the Mojang
+      // session call when told not to authenticate.
+      EncryptionRequestPacket request = generateEncryptionRequest();
+      request.setShouldAuthenticate(false);
+      this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
+      this.offlineEncryption = true;
+      mcConnection.write(request);
+      this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+    } else {
+      mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+          new AuthSessionHandler(server, inbound,
+              GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+    }
+  }
+
   private EncryptionRequestPacket generateEncryptionRequest() {
     byte[] verify = new byte[4];
     SECURE_RANDOM.nextBytes(verify);
@@ -324,6 +400,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
   private enum LoginState {
     LOGIN_PACKET_EXPECTED,
+    COOKIE_REQUESTED,
     LOGIN_PACKET_RECEIVED,
     ENCRYPTION_REQUEST_SENT,
     ENCRYPTION_RESPONSE_RECEIVED

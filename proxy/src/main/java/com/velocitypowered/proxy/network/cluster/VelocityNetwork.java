@@ -23,6 +23,7 @@ import com.velocitypowered.api.network.ProxyNode;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.ProxyState;
@@ -164,6 +165,24 @@ public final class VelocityNetwork implements Network {
   @Override
   public void cancelDrain() {
     server.getHealth().cancelDrain();
+  }
+
+  @Override
+  public CompletableFuture<Optional<GameProfile>> getCachedProfile(UUID uuid) {
+    return cluster == null ? CompletableFuture.completedFuture(Optional.empty())
+        : cluster.store().profile(uuid).thenApply(p -> p.map(VelocityNetwork::toProfile));
+  }
+
+  @Override
+  public CompletableFuture<Optional<GameProfile>> getCachedProfile(String username) {
+    return cluster == null ? CompletableFuture.completedFuture(Optional.empty())
+        : cluster.store().profile(username).thenApply(p -> p.map(VelocityNetwork::toProfile));
+  }
+
+  private static GameProfile toProfile(NetworkStore.CachedProfile p) {
+    return new GameProfile(p.uuid(), p.name(), p.properties() == null ? List.of()
+        : List.of(VelocityServer.GENERAL_GSON.fromJson(p.properties(),
+            GameProfile.Property[].class)));
   }
 
   /**
