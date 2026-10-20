@@ -70,6 +70,25 @@ class PassthroughTest {
   }
 
   @Test
+  void readsVarIntsFromDirectBuffers() {
+    for (int value : new int[] {0, 1, 127, 128, 300, 2097151, Integer.MAX_VALUE}) {
+      ByteBuf buf = io.netty.buffer.PooledByteBufAllocator.DEFAULT.directBuffer();
+      buf.writeByte(9);
+      ProtocolUtils.writeVarInt(buf, value);
+      buf.writeByte(7);
+      buf.readerIndex(1);
+      assertEquals(value, PassthroughHandler.readVarInt(buf));
+      assertEquals(7, buf.readByte());
+      buf.release();
+    }
+    ByteBuf truncated = io.netty.buffer.PooledByteBufAllocator.DEFAULT.directBuffer();
+    truncated.writeByte(0x80);
+    assertTrue(PassthroughHandler.readVarInt(truncated) < 0
+        || truncated.readerIndex() == 0, "truncated varint is not consumed");
+    truncated.release();
+  }
+
+  @Test
   void precompressedFrameDecodesToTheOriginalPacket() {
     ByteBuf original = packet(42, 5000);
     ByteBuf body = compressedBody(original.copy());

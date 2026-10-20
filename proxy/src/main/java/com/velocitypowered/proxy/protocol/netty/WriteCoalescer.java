@@ -43,6 +43,7 @@ final class WriteCoalescer {
   private final boolean direct;
   private ByteBuf batch;
   private List<ChannelPromise> promises;
+  private int lastSize; // size of the previous batch, so the next one rarely has to grow
 
   WriteCoalescer(boolean direct) {
     this.direct = direct;
@@ -51,7 +52,7 @@ final class WriteCoalescer {
   /** Returns the batch buffer with room for at least {@code bytes} more bytes. */
   ByteBuf batch(ChannelHandlerContext ctx, int bytes) {
     if (batch == null) {
-      int capacity = Math.max(INITIAL_CAPACITY, bytes);
+      int capacity = Math.max(Math.max(INITIAL_CAPACITY, bytes), Math.min(lastSize, MAX_BATCH));
       batch = direct ? ctx.alloc().directBuffer(capacity) : ctx.alloc().heapBuffer(capacity);
     } else {
       batch.ensureWritable(bytes);
@@ -79,6 +80,8 @@ final class WriteCoalescer {
       return;
     }
     batch = null;
+    // running average with some headroom, so one burst does not oversize every later batch
+    lastSize = (lastSize + buf.readableBytes() + (buf.readableBytes() >> 3)) >> 1;
     List<ChannelPromise> waiting = promises;
     promises = null;
     if (!buf.isReadable()) {

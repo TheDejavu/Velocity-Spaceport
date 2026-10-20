@@ -43,6 +43,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelPipeline;
+import io.netty.util.internal.PlatformDependent;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.DataFormatException;
@@ -68,6 +69,7 @@ public final class PassthroughHandler extends ChannelInboundHandlerAdapter {
       VelocityProperties.readBoolean("spaceport.compressed-passthrough", true);
   private static final int LARGE_PACKET = 128 * 1024;
   private static final int VANILLA_MAX_UNCOMPRESSED = 8 * 1024 * 1024;
+  private static final boolean RAW_READ = PlatformDependent.hasUnsafe();
   private static final long RECHECK_NANOS = 1_000_000_000L;
   // compressed bytes tried first; a dynamic Huffman header plus the id usually fit
   private static final int PEEK_INPUT = 256;
@@ -200,9 +202,12 @@ public final class PassthroughHandler extends ChannelInboundHandlerAdapter {
     int packetId;
     int dataLength = 0;
     if (backendCompressed) {
-      dataLength = ProtocolUtils.readVarInt(frame);
-      if (dataLength == 0) {
-        packetId = ProtocolUtils.readVarInt(frame);
+      dataLength = readVarInt(frame);
+      if (dataLength < 0) {
+        frame.readerIndex(start);
+        return false;
+      } else if (dataLength == 0) {
+        packetId = readVarInt(frame);
       } else if (!forwardCompressed || dataLength > VANILLA_MAX_UNCOMPRESSED) {
         frame.readerIndex(start);
         return false;
@@ -210,7 +215,7 @@ public final class PassthroughHandler extends ChannelInboundHandlerAdapter {
         packetId = peekCompressedId(inflater, peekInput, idBytes, frame);
       }
     } else {
-      packetId = ProtocolUtils.readVarInt(frame);
+      packetId = readVarInt(frame);
     }
     if (packetId < 0 || minecraftDecoder.isRegistered(packetId)) {
       frame.readerIndex(start); // Velocity handles this one
@@ -235,6 +240,34 @@ public final class PassthroughHandler extends ChannelInboundHandlerAdapter {
     }
     handler.passthroughWritten(size > LARGE_PACKET);
     return true;
+  }
+
+  /**
+   * Reads a VarInt straight from memory when the buffer has an address (the per-byte checks of
+   * {@code readByte} on a slice were a hot spot); -1 if it is malformed or truncated.
+   */
+  static int readVarInt(ByteBuf buf) {
+    int index = buf.readerIndex();
+    int end = Math.min(index + 5, buf.writerIndex());
+    if (!RAW_READ || !buf.hasMemoryAddress()) {
+      try {
+        return ProtocolUtils.readVarInt(buf);
+      } catch (RuntimeException malformed) { // the normal path reports it
+        buf.readerIndex(index);
+        return -1;
+      }
+    }
+    long address = buf.memoryAddress();
+    int value = 0;
+    for (int i = index, shift = 0; i < end; i++, shift += 7) {
+      byte b = PlatformDependent.getByte(address + i);
+      value |= (b & 0x7F) << shift;
+      if (b >= 0) {
+        buf.readerIndex(i + 1);
+        return value;
+      }
+    }
+    return -1;
   }
 
   /**
