@@ -46,6 +46,8 @@ public class MinecraftCompressDecoder extends MessageToMessageDecoder<ByteBuf> {
   private static final int SERVERBOUND_UNCOMPRESSED_CAP =
           Boolean.getBoolean("velocity.increased-compression-cap")
                   ? HARD_MAXIMUM_UNCOMPRESSED_SIZE : SERVERBOUND_MAXIMUM_UNCOMPRESSED_SIZE;
+  // DEFLATE's best case: a 258-byte match coded in 2 bits.
+  private static final int MAX_DEFLATE_RATIO = 1032;
   private static final boolean SKIP_COMPRESSION_VALIDATION = Boolean.getBoolean("velocity.skip-uncompressed-packet-size-validation");
   private final ProtocolUtils.Direction direction;
 
@@ -96,16 +98,24 @@ public class MinecraftCompressDecoder extends MessageToMessageDecoder<ByteBuf> {
               "Uncompressed size %s exceeds hard threshold of %s", claimedUncompressedSize,
               SERVERBOUND_UNCOMPRESSED_CAP);
     }
+    if (!SKIP_COMPRESSION_VALIDATION) {
+      // Spaceport: deflate cannot expand data by more than 1032:1, so a larger claim is a lie
+      // (a decompression bomb); reject it before allocating the claimed size.
+      checkFrame(claimedUncompressedSize <= (long) in.readableBytes() * MAX_DEFLATE_RATIO,
+          "Uncompressed size %s is impossible for %s compressed bytes", claimedUncompressedSize,
+          in.readableBytes());
+    }
+    // Spaceport: charge the rate limit before inflating, not after the work is done.
+    if (packetLimiter != null && !packetLimiter.account(claimedUncompressedSize)) {
+      throw new QuietDecoderException("Rate limit exceeded while processing packets for %s"
+          .formatted(ctx.channel().remoteAddress()));
+    }
     ByteBuf compatibleIn = ensureCompatible(ctx.alloc(), compressor, in);
     ByteBuf uncompressed = preferredBuffer(ctx.alloc(), compressor, claimedUncompressedSize);
     try {
       compressor.inflate(compatibleIn, uncompressed, claimedUncompressedSize);
       checkFrame(uncompressed.writerIndex() == claimedUncompressedSize,
               "Decompressed size %s does not match claimed uncompressed size %s", uncompressed.writerIndex(), claimedUncompressedSize);
-      if (packetLimiter != null && !packetLimiter.account(claimedUncompressedSize)) {
-        throw new QuietDecoderException("Rate limit exceeded while processing packets for %s"
-            .formatted(ctx.channel().remoteAddress()));
-      }
       out.add(uncompressed);
     } catch (Exception e) {
       uncompressed.release();
