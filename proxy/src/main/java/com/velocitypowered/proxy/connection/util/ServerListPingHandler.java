@@ -74,7 +74,8 @@ public class ServerListPingHandler {
     return new ServerPing(
         new ServerPing.Version(version.getProtocol(),
             "Velocity " + ProtocolVersion.SUPPORTED_VERSION_STRING),
-        new ServerPing.Players(server.getPlayerCount(), configuration.getShowMaxPlayers(),
+        new ServerPing.Players(server.getNetwork().getPlayerCount(),
+            configuration.getShowMaxPlayers(),
             samplePlayers),
         configuration.getMotd(),
         configuration.getFavicon().orElse(null),

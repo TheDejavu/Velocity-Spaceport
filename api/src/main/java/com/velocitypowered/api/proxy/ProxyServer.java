@@ -10,6 +10,7 @@ package com.velocitypowered.api.proxy;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.event.EventManager;
+import com.velocitypowered.api.network.Network;
 import com.velocitypowered.api.plugin.PluginManager;
 import com.velocitypowered.api.proxy.config.ProxyConfig;
 import com.velocitypowered.api.proxy.messages.ChannelRegistrar;
@@ -86,6 +87,14 @@ public interface ProxyServer extends Audience {
    * @return the players on this proxy
    */
   int getPlayerCount();
+
+  /**
+   * Spaceport: returns the network of proxies this proxy belongs to. When the network is disabled
+   * it describes this proxy alone.
+   *
+   * @return the network
+   */
+  Network getNetwork();
 
   /**
    * Retrieves a registered {@link RegisteredServer} instance by its name. The search is

@@ -47,6 +47,7 @@ import com.velocitypowered.proxy.command.builtin.ServerCommand;
 import com.velocitypowered.proxy.command.builtin.ShutdownCommand;
 import com.velocitypowered.proxy.command.builtin.VelocityCommand;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
+import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
@@ -55,6 +56,10 @@ import com.velocitypowered.proxy.crypto.EncryptionUtils;
 import com.velocitypowered.proxy.event.VelocityEventManager;
 import com.velocitypowered.proxy.network.ConnectionManager;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.cluster.LocalStore;
+import com.velocitypowered.proxy.network.cluster.NetworkStore;
+import com.velocitypowered.proxy.network.cluster.RedisStore;
+import com.velocitypowered.proxy.network.cluster.VelocityNetwork;
 import com.velocitypowered.proxy.plugin.VelocityPluginManager;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginContainer;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginDescription;
@@ -79,6 +84,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -170,6 +176,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
   private @Nullable ClusterService cluster;
+  private VelocityNetwork network = new VelocityNetwork(this, null);
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
@@ -310,7 +317,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     commandRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getCommandRatelimit());
     tabCompleteRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getTabCompleteRatelimit());
     if (configuration.getNetworkConfig().enabled()) {
-      cluster = new ClusterService(configuration.getNetworkConfig(), configuration.getBind());
+      startNetwork(configuration.getNetworkConfig());
     }
     loadPlugins();
 
@@ -849,6 +856,49 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   @Override
   public int getPlayerCount() {
     return connectionsByUuid.size();
+  }
+
+  @Override
+  public VelocityNetwork getNetwork() {
+    return network;
+  }
+
+  public @Nullable ClusterService getCluster() {
+    return cluster;
+  }
+
+  private void startNetwork(NetworkConfig config) {
+    String id = config.proxyId();
+    if (id.equals("auto")) {
+      try {
+        id = InetAddress.getLocalHost().getHostName() + "-" + configuration.getBind().getPort();
+      } catch (UnknownHostException e) {
+        id = "proxy-" + configuration.getBind().getPort();
+      }
+    }
+    NetworkStore store = config.store().equals("local") ? new LocalStore()
+        : new RedisStore(config.redisUri(), config.keyPrefix());
+    cluster = new ClusterService(config, id, store, new ClusterService.Host() {
+      @Override
+      public int localPlayerCount() {
+        return connectionsByUuid.size();
+      }
+
+      @Override
+      public void disconnectDuplicate(UUID player) {
+        ConnectedPlayer p = connectionsByUuid.get(player);
+        if (p != null) {
+          p.disconnect(Component.translatable("multiplayer.disconnect.duplicate_login"));
+        }
+      }
+
+      @Override
+      public void fire(Object event) {
+        eventManager.fireAndForget(event);
+      }
+    });
+    cluster.start();
+    network = new VelocityNetwork(this, cluster);
   }
 
   @Override

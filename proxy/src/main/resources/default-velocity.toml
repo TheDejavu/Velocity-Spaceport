@@ -214,3 +214,15 @@ redis-uri = "redis://127.0.0.1:6379/0"
 
 # Prefix for every Redis key and channel, so several networks can share one Redis.
 key-prefix = "sp:"
+
+# "redis", or "local" (in memory; a single proxy, for testing).
+store = "redis"
+
+# A player who logs in while already on another proxy of the network:
+# "newest-wins" disconnects the old session (vanilla behaviour), "deny-new" refuses the new login.
+duplicate-login = "newest-wins"
+
+# While Redis is unreachable: "stop-logins" refuses new logins after a short retry (no duplicate
+# logins possible), "local-only" lets them in without the network check and re-checks them once
+# Redis is back. Players already online are never kicked either way.
+redis-down-policy = "stop-logins"

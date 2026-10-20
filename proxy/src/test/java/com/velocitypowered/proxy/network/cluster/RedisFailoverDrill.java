@@ -50,7 +50,7 @@ class RedisFailoverDrill {
     String prefix = "spdrill:" + UUID.randomUUID() + ":";
 
     try (RedisStore store = new RedisStore(uri, prefix)) {
-      store.heartbeat("drill", 600_000).join();
+      store.tick("drill", 0, 600_000, "drill").join();
       long start = System.currentTimeMillis();
       AtomicLong lastSeq = new AtomicLong(-1);
       AtomicLong lost = new AtomicLong();
@@ -99,7 +99,8 @@ class RedisFailoverDrill {
         UUID player = UUID.randomUUID();
         String error = null;
         try {
-          store.claim(player, "drill", 1).get(3, TimeUnit.SECONDS);
+          store.claim(new NetworkStore.PlayerRecord(player, "p" + player.hashCode(), "drill", 1,
+              null, "127.0.0.1", now), 1, 5000).get(3, TimeUnit.SECONDS);
         } catch (Exception e) {
           Throwable c = e.getCause() != null ? e.getCause() : e;
           error = c.getClass().getSimpleName() + ": " + c.getMessage();

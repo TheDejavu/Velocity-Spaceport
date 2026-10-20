@@ -1050,10 +1050,38 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param proxyId   this proxy's id, "auto" for hostname-port
    * @param redisUri  redis:// or redis-sentinel:// URI
    * @param keyPrefix prefix for every Redis key and channel
+   * @param store "redis", or "local" (in memory, one proxy)
+   * @param duplicateLogin "newest-wins" or "deny-new", for a player already on another proxy
+   * @param redisDownPolicy "stop-logins" or "local-only" (admit without the network check)
    */
-  public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix) {
-    public static final NetworkConfig DEFAULT =
-        new NetworkConfig(false, "auto", "redis://127.0.0.1:6379/0", "sp:");
+  public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
+                              String store, String duplicateLogin, String redisDownPolicy) {
+    public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
+        "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins");
+
+    /**
+     * Validates the choices.
+     */
+    public NetworkConfig {
+      checkChoice("store", store, "redis", "local");
+      checkChoice("duplicate-login", duplicateLogin, "newest-wins", "deny-new");
+      checkChoice("redis-down-policy", redisDownPolicy, "stop-logins", "local-only");
+    }
+
+    private static void checkChoice(String key, String value, String... allowed) {
+      if (!List.of(allowed).contains(value)) {
+        throw new IllegalArgumentException("[network] " + key + " must be one of "
+            + String.join(", ", allowed) + ", not \"" + value + "\"");
+      }
+    }
+
+    public boolean newestWins() {
+      return duplicateLogin.equals("newest-wins");
+    }
+
+    public boolean localOnlyWhenDown() {
+      return redisDownPolicy.equals("local-only");
+    }
 
     /**
      * Reads the [network] section.
@@ -1069,7 +1097,10 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("enabled", DEFAULT.enabled()),
           config.getOrElse("proxy-id", DEFAULT.proxyId()),
           config.getOrElse("redis-uri", DEFAULT.redisUri()),
-          config.getOrElse("key-prefix", DEFAULT.keyPrefix()));
+          config.getOrElse("key-prefix", DEFAULT.keyPrefix()),
+          config.getOrElse("store", DEFAULT.store()),
+          config.getOrElse("duplicate-login", DEFAULT.duplicateLogin()),
+          config.getOrElse("redis-down-policy", DEFAULT.redisDownPolicy()));
     }
   }
 }

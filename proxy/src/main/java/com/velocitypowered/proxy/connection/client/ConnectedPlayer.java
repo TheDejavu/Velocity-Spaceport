@@ -69,6 +69,7 @@ import com.velocitypowered.proxy.connection.player.resourcepack.handler.Resource
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
 import com.velocitypowered.proxy.connection.util.VelocityInboundConnection;
+import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
@@ -174,6 +175,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private final @Nullable InetSocketAddress virtualHost;
   private final @Nullable String rawVirtualHost;
   private final HandshakeIntent handshakeIntent;
+  private volatile long networkSession; // Spaceport: network login session, 0 if none
   private GameProfile profile;
   private PermissionFunction permissionFunction;
   private int tryIndex = 0;
@@ -912,11 +914,20 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    */
   public void setConnectedServer(@Nullable VelocityServerConnection serverConnection) {
     this.connectedServer = serverConnection;
+    ClusterService cluster = server.getCluster();
+    if (cluster != null && serverConnection != null && networkSession != 0) {
+      cluster.serverChanged(getUniqueId(), networkSession,
+          serverConnection.getServerInfo().getName());
+    }
     this.tryIndex = 0; // reset since we got connected to a server
 
     if (serverConnection == connectionInFlight) {
       connectionInFlight = null;
     }
+  }
+
+  public void setNetworkSession(long networkSession) {
+    this.networkSession = networkSession;
   }
 
   public void sendLegacyForgeHandshakeResetPacket() {
@@ -947,6 +958,10 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
     Optional<Player> connectedPlayer = server.getPlayer(this.getUniqueId());
     server.unregisterConnection(this);
+    ClusterService cluster = server.getCluster();
+    if (cluster != null && networkSession != 0) {
+      cluster.playerLeft(getUniqueId(), networkSession);
+    }
 
     DisconnectEvent.LoginStatus status;
     if (connectedPlayer.isPresent()) {

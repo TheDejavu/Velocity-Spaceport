@@ -121,7 +121,7 @@ public class GlistCommand {
   }
 
   private void sendTotalProxyCount(CommandSource target) {
-    final int online = server.getPlayerCount();
+    final int online = server.getNetwork().getPlayerCount();
     final TranslatableComponent.Builder msg = Component.translatable()
             .key(online == 1
                   ? "velocity.command.glist-player-singular"

@@ -107,7 +107,7 @@ public class BungeeCordMessageResponder {
     if (target.equals("ALL")) {
       out.writeUTF("PlayerCount");
       out.writeUTF("ALL");
-      out.writeInt(proxy.getPlayerCount());
+      out.writeInt(proxy.getNetwork().getPlayerCount());
     } else {
       proxy.getServer(target).ifPresent(rs -> {
         int playersOnServer = rs.getPlayersConnected().size();

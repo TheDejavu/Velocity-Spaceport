@@ -39,6 +39,7 @@ import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
+import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.packet.LoginAcknowledgedPacket;
 import com.velocitypowered.proxy.protocol.packet.ServerLoginSuccessPacket;
@@ -226,37 +227,61 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
       Optional<Component> reason = event.getResult().getReasonComponent();
       if (reason.isPresent()) {
         player.disconnect0(reason.get(), true);
-      } else {
-        if (!server.registerConnection(player)) {
-          player.disconnect0(Component.translatable("velocity.error.already-connected-proxy"), true);
-          return;
-        }
-
-        ServerLoginSuccessPacket success = new ServerLoginSuccessPacket();
-        success.setUsername(player.getUsername());
-        success.setProperties(player.getGameProfileProperties());
-        success.setUuid(player.getUniqueId());
-        if (inbound.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_26_2)) {
-          success.setSessionId(server.getSessionId());
-        }
-        mcConnection.write(success);
-
-        loginState = State.SUCCESS_SENT;
-        if (inbound.getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
-          loginState = State.ACKNOWLEDGED;
-          mcConnection.setActiveSessionHandler(StateRegistry.PLAY, new InitialConnectSessionHandler(player, server));
-          server.getEventManager().fire(new PostLoginEvent(player)).thenCompose((ignored) -> {
-            return connectToInitialServer(player);
-          }).exceptionally((ex) -> {
-            logger.error("Exception while connecting {} to initial server", player, ex);
-            return null;
-          });
-        }
+        return;
       }
+      ClusterService cluster = server.getCluster();
+      if (cluster == null) {
+        finishLogin(player);
+        return;
+      }
+      // Spaceport: network-wide duplicate check; the player is owned by this proxy afterwards.
+      cluster.claimLogin(player.getUniqueId(), player.getUsername(),
+              player.getRemoteAddress().getAddress().getHostAddress())
+          .whenCompleteAsync((result, ex) -> {
+            if (ex != null) {
+              logger.error("Network login check failed for {}", player, ex);
+              player.disconnect0(ClusterService.UNAVAILABLE, true);
+            } else if (result.denyReason() != null) {
+              player.disconnect0(result.denyReason(), true);
+            } else if (mcConnection.isClosed()) {
+              cluster.playerLeft(player.getUniqueId(), result.session());
+            } else {
+              player.setNetworkSession(result.session());
+              finishLogin(player);
+            }
+          }, mcConnection.eventLoop());
     }, mcConnection.eventLoop()).exceptionally((ex) -> {
       logger.error("Exception while completing login initialisation phase for {}", player, ex);
       return null;
     });
+  }
+
+  private void finishLogin(ConnectedPlayer player) {
+    if (!server.registerConnection(player)) {
+      player.disconnect0(Component.translatable("velocity.error.already-connected-proxy"), true);
+      return;
+    }
+
+    ServerLoginSuccessPacket success = new ServerLoginSuccessPacket();
+    success.setUsername(player.getUsername());
+    success.setProperties(player.getGameProfileProperties());
+    success.setUuid(player.getUniqueId());
+    if (inbound.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_26_2)) {
+      success.setSessionId(server.getSessionId());
+    }
+    mcConnection.write(success);
+
+    loginState = State.SUCCESS_SENT;
+    if (inbound.getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
+      loginState = State.ACKNOWLEDGED;
+      mcConnection.setActiveSessionHandler(StateRegistry.PLAY, new InitialConnectSessionHandler(player, server));
+      server.getEventManager().fire(new PostLoginEvent(player)).thenCompose((ignored) -> {
+        return connectToInitialServer(player);
+      }).exceptionally((ex) -> {
+        logger.error("Exception while connecting {} to initial server", player, ex);
+        return null;
+      });
+    }
   }
 
   private CompletableFuture<Void> connectToInitialServer(ConnectedPlayer player) {
