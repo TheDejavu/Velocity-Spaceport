@@ -469,6 +469,8 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   public void handleGeneric(MinecraftPacket packet) {
     if (packet instanceof PluginMessagePacket pluginMessage) {
       pluginMessage.retain();
+    } else if (packet instanceof UpsertPlayerInfoPacket info) {
+      info.retain(); // may hold the received bytes (Spaceport raw player info)
     }
     boolean huge = packet instanceof DeferredByteBufHolder def && def.content().readableBytes() > LARGE_PACKET_THRESHOLD;
     playerConnection.delayedWrite(packet);

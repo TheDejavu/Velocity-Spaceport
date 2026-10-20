@@ -25,7 +25,9 @@ import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
 import com.velocitypowered.proxy.protocol.packet.chat.RemoteChatSession;
 import com.velocitypowered.proxy.tablist.SharedProfiles;
+import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
+import io.netty.util.ReferenceCounted;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -35,12 +37,18 @@ import java.util.List;
 import java.util.UUID;
 import org.jetbrains.annotations.Nullable;
 
-public class UpsertPlayerInfoPacket implements MinecraftPacket {
+public class UpsertPlayerInfoPacket implements MinecraftPacket, ReferenceCounted {
 
   private static final Action[] ALL_ACTIONS = Action.class.getEnumConstants();
+  // Spaceport: Velocity reads player info to track tab lists but forwards it unchanged, so keep
+  // the received bytes and write those instead of encoding every entry (and skin) again.
+  private static final boolean KEEP_RAW =
+      VelocityProperties.readBoolean("spaceport.raw-player-info", true);
 
   private final EnumSet<Action> actions;
   private final List<Entry> entries;
+  private @Nullable ByteBuf raw;
+  private @Nullable ProtocolVersion rawVersion;
 
   public UpsertPlayerInfoPacket() {
     this.actions = EnumSet.noneOf(Action.class);
@@ -70,24 +78,29 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
   }
 
   public void addAction(Action action) {
+    dropRaw();
     this.actions.add(action);
   }
 
   public void addAllActions(Collection<? extends Action> actions) {
+    dropRaw();
     this.actions.addAll(actions);
   }
 
   public void addEntry(Entry entry) {
+    dropRaw();
     this.entries.add(entry);
   }
 
   public void addAllEntries(Collection<? extends Entry> entries) {
+    dropRaw();
     this.entries.addAll(entries);
   }
 
   @Override
   public void decode(ByteBuf buf, ProtocolUtils.Direction direction,
       ProtocolVersion protocolVersion) {
+    int start = buf.readerIndex();
     byte[] bytes = new byte[-Math.floorDiv(-ALL_ACTIONS.length, 8)];
     buf.readBytes(bytes);
     BitSet actionSet = BitSet.valueOf(bytes);
@@ -106,11 +119,19 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
       }
       addEntry(entry);
     }
+    if (KEEP_RAW) {
+      raw = buf.retainedSlice(start, buf.readerIndex() - start);
+      rawVersion = protocolVersion;
+    }
   }
 
   @Override
   public void encode(ByteBuf buf, ProtocolUtils.Direction direction,
       ProtocolVersion protocolVersion) {
+    if (raw != null && rawVersion == protocolVersion) {
+      buf.writeBytes(raw, raw.readerIndex(), raw.readableBytes());
+      return;
+    }
     BitSet set = new BitSet(ALL_ACTIONS.length);
     for (int idx = 0; idx < ALL_ACTIONS.length; idx++) {
       set.set(idx, this.actions.contains(ALL_ACTIONS[idx]));
@@ -132,6 +153,56 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
   @Override
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
+  }
+
+  private void dropRaw() {
+    if (raw != null) {
+      raw.release();
+      raw = null;
+    }
+  }
+
+  // Reference counting covers the kept bytes only; a packet without them is not counted.
+
+  @Override
+  public int refCnt() {
+    return raw == null ? 1 : raw.refCnt();
+  }
+
+  @Override
+  public UpsertPlayerInfoPacket retain() {
+    if (raw != null) {
+      raw.retain();
+    }
+    return this;
+  }
+
+  @Override
+  public UpsertPlayerInfoPacket retain(int increment) {
+    if (raw != null) {
+      raw.retain(increment);
+    }
+    return this;
+  }
+
+  @Override
+  public UpsertPlayerInfoPacket touch() {
+    return this;
+  }
+
+  @Override
+  public UpsertPlayerInfoPacket touch(Object hint) {
+    return this;
+  }
+
+  @Override
+  public boolean release() {
+    return raw != null && raw.release();
+  }
+
+  @Override
+  public boolean release(int decrement) {
+    return raw != null && raw.release(decrement);
   }
 
   public enum Action {
