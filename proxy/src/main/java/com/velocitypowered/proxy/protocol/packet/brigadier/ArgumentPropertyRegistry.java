@@ -45,6 +45,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.velocitypowered.api.network.ProtocolVersion;
+import com.velocitypowered.proxy.command.builtin.SendTargetArgumentType;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import io.netty.buffer.ByteBuf;
 import org.jetbrains.annotations.NotNull;
@@ -198,6 +199,20 @@ public class ArgumentPropertyRegistry {
     register(id("brigadier:integer", mapSet(MINECRAFT_1_19, 3)), IntegerArgumentType.class, INTEGER);
     register(id("brigadier:long", mapSet(MINECRAFT_1_19, 4)), LongArgumentType.class, LONG);
     register(id("brigadier:string", mapSet(MINECRAFT_1_19, 5)), StringArgumentType.class, STRING);
+    // Spaceport: /send's target (it allows ":") goes to clients as a plain word.
+    byClass.put(SendTargetArgumentType.class, new ArgumentPropertySerializer<SendTargetArgumentType>() {
+      @Override
+      public SendTargetArgumentType deserialize(ByteBuf buf, ProtocolVersion protocolVersion) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void serialize(SendTargetArgumentType object, ByteBuf buf,
+          ProtocolVersion protocolVersion) {
+        ProtocolUtils.writeVarInt(buf, 0); // SINGLE_WORD
+      }
+    });
+    classToId.put(SendTargetArgumentType.class, classToId.get(StringArgumentType.class));
 
     empty(id("minecraft:entity", mapSet(MINECRAFT_1_19, 6)), ByteArgumentPropertySerializer.BYTE);
     empty(id("minecraft:game_profile", mapSet(MINECRAFT_1_19, 7)));

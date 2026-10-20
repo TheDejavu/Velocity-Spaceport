@@ -59,7 +59,7 @@ public class SendCommand {
             source.getPermissionValue("velocity.command.send") == Tristate.TRUE)
         .executes(this::usage);
     final RequiredArgumentBuilder<CommandSource, String> playerNode = BrigadierCommand
-        .requiredArgumentBuilder(PLAYER_ARG, StringArgumentType.string()) // "server:name" needs quotes
+        .requiredArgumentBuilder(PLAYER_ARG, SendTargetArgumentType.INSTANCE)
         .suggests((context, builder) -> {
           final String argument = context.getArguments().containsKey(PLAYER_ARG)
               ? context.getArgument(PLAYER_ARG, String.class)
