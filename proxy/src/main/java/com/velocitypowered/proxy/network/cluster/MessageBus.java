@@ -54,8 +54,8 @@ public final class MessageBus {
   public static final byte UNKNOWN_ACTION = 3;
 
   static final long ATTEMPT_MILLIS = 750;
-  /** 6 attempts = 4.5 s, longer than a tuned Sentinel failover (3 s). */
-  static final int ATTEMPTS = 6;
+  /** 8 attempts = 6 s: a Sentinel failover (3 s) plus the pub/sub connections coming back. */
+  static final int ATTEMPTS = 8;
 
   private static final Logger logger = LogManager.getLogger(MessageBus.class);
 
