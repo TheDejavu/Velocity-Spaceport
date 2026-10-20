@@ -23,6 +23,8 @@ tasks {
             attributes["Implementation-Title"] = "Velocity"
             attributes["Implementation-Vendor"] = "Velocity Contributors"
             attributes["Multi-Release"] = "true"
+            // Spaceport: lets Netty create direct buffers without JDK cleaners (see Velocity.java)
+            attributes["Add-Opens"] = "java.base/java.nio"
         }
     }
 

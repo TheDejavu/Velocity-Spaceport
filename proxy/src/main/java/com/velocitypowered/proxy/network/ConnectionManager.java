@@ -38,6 +38,7 @@ import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.unix.UnixChannelOption;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.concurrent.MultithreadEventExecutorGroup;
+import io.netty.util.internal.PlatformDependent;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.util.Collection;
@@ -85,9 +86,16 @@ public final class ConnectionManager {
     this.resolver = new SeparatePoolInetNameResolver(GlobalEventExecutor.INSTANCE);
   }
 
+  /**
+   * Logs the transport, natives and buffer setup in use.
+   */
   public void logChannelInformation() {
     LOGGER.info("Connections will use {} channels, {} compression, {} ciphers", this.transportType,
         Natives.compress.getLoadedVariant(), Natives.cipher.getLoadedVariant());
+    if (PlatformDependent.hasUnsafe() && !PlatformDependent.useDirectBufferNoCleaner()) {
+      LOGGER.warn("Netty's direct buffers count against -XX:MaxDirectMemorySize (System.gc() near "
+          + "the limit). Start with -jar or add --add-opens java.base/java.nio=ALL-UNNAMED.");
+    }
   }
 
   /**

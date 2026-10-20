@@ -40,6 +40,16 @@ public class Velocity {
     if (!VelocityProperties.hasProperty("io.netty.noUnsafe")
         && VelocityProperties.readBoolean("spaceport.netty-unsafe", true)) {
       System.setProperty("io.netty.noUnsafe", "false");
+      // With Unsafe, Netty would otherwise allocate through ByteBuffer.allocateDirect: counted
+      // against MaxDirectMemorySize, with System.gc() storms near the limit. Netty's own direct
+      // buffers (needs the java.nio opening from the jar manifest) are not, and like Netty's
+      // Java 25 default the total is left unlimited unless io.netty.maxDirectMemory is set.
+      if (!VelocityProperties.hasProperty("io.netty.tryReflectionSetAccessible")) {
+        System.setProperty("io.netty.tryReflectionSetAccessible", "true");
+      }
+      if (!VelocityProperties.hasProperty("io.netty.maxDirectMemory")) {
+        System.setProperty("io.netty.maxDirectMemory", String.valueOf(Long.MAX_VALUE));
+      }
     }
 
     System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
