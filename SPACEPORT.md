@@ -26,6 +26,8 @@ with `java -jar`; otherwise also add `--add-opens java.base/java.nio=ALL-UNNAMED
 | `spaceport.offline-encryption` (`false`) | Encrypts offline-mode connections from 1.20.5+ clients (no Mojang authentication). |
 | `spaceport.backend-read-timeout` (`20000`) | Backend connections time out after at most this many milliseconds, before the client's own 30 s timeout. `0` uses `read-timeout`. |
 | `spaceport.failover-on-backend-timeout` (`true`) | A backend that stops responding sends its players to the next server in the try list while their clients are still connected, instead of disconnecting them. |
+| `spaceport.unwritable-timeout` (`30000`) | A client that has not read its pending data for this many milliseconds is disconnected ("Timed out") instead of holding its buffers. `0` turns it off. |
+| `spaceport.client-write-buffer` (`0`) | Per-player write buffer in bytes before backend reads pause; `0` keeps Velocity's 2 MiB. Lower uses less memory under bursts but costs some CPU. |
 | `spaceport.serverbound-flush-batching` (`true`) | Client-to-backend packets flush once per read instead of once per packet. |
 | fix | Compressed frames claiming more than DEFLATE can produce (over 1032x) are rejected before allocating. Off with `velocity.skip-uncompressed-packet-size-validation`. |
 | perf | The configuration-phase tags packet is forwarded without being parsed and re-encoded. |
