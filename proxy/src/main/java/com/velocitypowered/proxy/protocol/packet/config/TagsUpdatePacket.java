@@ -17,63 +17,34 @@
 
 package com.velocitypowered.proxy.protocol.packet.config;
 
-import com.google.common.collect.ImmutableMap;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.ProtocolUtils.Direction;
+import com.velocitypowered.proxy.protocol.util.DeferredByteBufHolder;
 import io.netty.buffer.ByteBuf;
 
-import java.util.Map;
-
-public class TagsUpdatePacket implements MinecraftPacket {
-
-  private Map<String, Map<String, int[]>> tags;
-
-  public TagsUpdatePacket(Map<String, Map<String, int[]>> tags) {
-    this.tags = tags;
-  }
+/**
+ * Tags update. Velocity only forwards it, so it keeps the raw bytes (Spaceport) instead of parsing
+ * and re-encoding thousands of tag entries on every configuration phase.
+ */
+public class TagsUpdatePacket extends DeferredByteBufHolder implements MinecraftPacket {
 
   public TagsUpdatePacket() {
-    this.tags = Map.of();
+    super(null);
   }
 
   @Override
   public void decode(ByteBuf buf, ProtocolUtils.Direction direction,
                      ProtocolVersion protocolVersion) {
-    ImmutableMap.Builder<String, Map<String, int[]>> builder = ImmutableMap.builder();
-    int size = ProtocolUtils.readVarInt(buf);
-    for (int i = 0; i < size; i++) {
-      String key = ProtocolUtils.readString(buf);
-
-      int innerSize = ProtocolUtils.readVarInt(buf);
-      ImmutableMap.Builder<String, int[]> innerBuilder = ImmutableMap.builder();
-      for (int j = 0; j < innerSize; j++) {
-        String innerKey = ProtocolUtils.readString(buf);
-        int[] innerValue = ProtocolUtils.readVarIntArray(buf);
-        innerBuilder.put(innerKey, innerValue);
-      }
-
-      builder.put(key, innerBuilder.build());
-    }
-    tags = builder.build();
+    this.replace(buf.readRetainedSlice(buf.readableBytes()));
   }
 
   @Override
   public void encode(ByteBuf buf, ProtocolUtils.Direction direction,
                      ProtocolVersion protocolVersion) {
-    ProtocolUtils.writeVarInt(buf, tags.size());
-    for (Map.Entry<String, Map<String, int[]>> entry : tags.entrySet()) {
-      ProtocolUtils.writeString(buf, entry.getKey());
-      // Oh, joy
-      ProtocolUtils.writeVarInt(buf, entry.getValue().size());
-      for (Map.Entry<String, int[]> innerEntry : entry.getValue().entrySet()) {
-        // Yea, object oriented programming be damned
-        ProtocolUtils.writeString(buf, innerEntry.getKey());
-        ProtocolUtils.writeVarIntArray(buf, innerEntry.getValue());
-      }
-    }
+    buf.writeBytes(content(), content().readerIndex(), content().readableBytes());
   }
 
   @Override
@@ -83,19 +54,6 @@ public class TagsUpdatePacket implements MinecraftPacket {
 
   @Override
   public int encodeSizeHint(Direction direction, ProtocolVersion version) {
-    int size = ProtocolUtils.varIntBytes(tags.size());
-    for (Map.Entry<String, Map<String, int[]>> entry : tags.entrySet()) {
-      size += ProtocolUtils.stringSizeHint(entry.getKey());
-      size += ProtocolUtils.varIntBytes(entry.getValue().size());
-      for (Map.Entry<String, int[]> innerEntry : entry.getValue().entrySet()) {
-        size += ProtocolUtils.stringSizeHint(innerEntry.getKey());
-        size += ProtocolUtils.varIntBytes(innerEntry.getValue().length);
-        for (int innerEntryValue : innerEntry.getValue()) {
-          size += ProtocolUtils.varIntBytes(innerEntryValue);
-        }
-      }
-    }
-
-    return size;
+    return content().readableBytes();
   }
 }
