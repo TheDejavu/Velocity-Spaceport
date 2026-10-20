@@ -20,6 +20,7 @@ package com.velocitypowered.proxy.protocol.packet.chat.legacy;
 import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
+import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.protocol.packet.chat.ChatHandler;
 
@@ -40,7 +41,8 @@ public class LegacyChatHandler implements ChatHandler<LegacyChatPacket> {
 
   @Override
   public void handlePlayerChatInternal(LegacyChatPacket packet) {
-    MinecraftConnection serverConnection = player.ensureAndGetCurrentServer().ensureConnected();
+    VelocityServerConnection server = player.getConnectedServer();
+    MinecraftConnection serverConnection = server == null ? null : server.getConnection();
     if (serverConnection == null) {
       return;
     }

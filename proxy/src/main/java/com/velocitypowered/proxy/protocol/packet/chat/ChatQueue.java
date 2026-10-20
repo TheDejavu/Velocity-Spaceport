@@ -18,6 +18,7 @@
 package com.velocitypowered.proxy.protocol.packet.chat;
 
 import com.velocitypowered.proxy.connection.MinecraftConnection;
+import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import io.netty.channel.ChannelFuture;
@@ -55,7 +56,14 @@ public class ChatQueue implements AutoCloseable {
       if (closed) {
         throw new IllegalStateException("ChatQueue has already been closed");
       }
-      MinecraftConnection smc = player.ensureAndGetCurrentServer().ensureConnected();
+      // Spaceport: between servers (kicked, switching) there is no backend to send to. Drop the
+      // packet like other serverbound packets instead of throwing, which kicked the player with
+      // "internal error" (and skipped the fallback server) when a command raced a backend kick.
+      VelocityServerConnection server = player.getConnectedServer();
+      MinecraftConnection smc = server == null ? null : server.getConnection();
+      if (smc == null) {
+        return;
+      }
       head = head.thenCompose(v -> {
         if (closed) {
           return CompletableFuture.completedFuture(null);
