@@ -64,6 +64,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
  */
 public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
+  private static final boolean OFFLINE_ENCRYPTION =
+      VelocityProperties.readBoolean("spaceport.offline-encryption", false);
+
   private static final Logger logger = LogManager.getLogger(InitialLoginSessionHandler.class);
   private static final SecureRandom SECURE_RANDOM = new SecureRandom();
   private static final String MOJANG_HASJOINED_URL =
@@ -77,6 +80,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
   private @MonotonicNonNull ServerLoginPacket login;
   private byte[] verify = EMPTY_BYTE_ARRAY;
   private LoginState currentState = LoginState.LOGIN_PACKET_EXPECTED;
+  private boolean offlineEncryption;
   private final boolean forceKeyAuthentication;
 
   InitialLoginSessionHandler(VelocityServer server, MinecraftConnection mcConnection,
@@ -150,6 +154,16 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
             this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
             mcConnection.write(request);
             this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+          } else if (OFFLINE_ENCRYPTION
+              && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)) {
+            // Spaceport: encrypt offline-mode connections too. 1.20.5+ clients skip the Mojang
+            // session call when told not to authenticate.
+            EncryptionRequestPacket request = generateEncryptionRequest();
+            request.setShouldAuthenticate(false);
+            this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
+            this.offlineEncryption = true;
+            mcConnection.write(request);
+            this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
           } else {
             mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
                 new AuthSessionHandler(server, inbound,
@@ -204,6 +218,12 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       // Go ahead and enable encryption. Once the client sends EncryptionResponse, encryption
       // is enabled.
       mcConnection.enableEncryption(decryptedSharedSecret);
+      if (offlineEncryption) {
+        mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+            new AuthSessionHandler(server, inbound,
+                GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+        return true;
+      }
 
       String serverId = generateServerId(decryptedSharedSecret, serverKeyPair.getPublic());
       String playerIp = ((InetSocketAddress) mcConnection.getRemoteAddress()).getHostString();

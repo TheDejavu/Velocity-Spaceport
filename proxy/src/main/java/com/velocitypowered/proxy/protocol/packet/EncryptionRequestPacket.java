@@ -45,6 +45,10 @@ public class EncryptionRequestPacket implements MinecraftPacket {
     return verifyToken.clone();
   }
 
+  public void setShouldAuthenticate(boolean shouldAuthenticate) {
+    this.shouldAuthenticate = shouldAuthenticate;
+  }
+
   public void setVerifyToken(byte[] verifyToken) {
     this.verifyToken = verifyToken.clone();
   }
