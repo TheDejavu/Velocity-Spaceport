@@ -32,7 +32,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -607,16 +606,12 @@ public final class ClusterService implements AutoCloseable {
       boolean created = !Files.exists(file);
       ticketKeys = RouteTicket.Keys.load(file);
       if (created) {
-        try {
-          Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-        } catch (UnsupportedOperationException ignored) {
-          // not a POSIX file system
-        }
         logger.warn("Created {} with a new transfer ticket key: copy it to every proxy of the"
             + " network", file);
       }
     } catch (IOException | RuntimeException e) {
-      logger.error("Cannot read the transfer ticket keys from {}; transfers are off", file, e);
+      logger.error("Cannot use the transfer ticket keys in {}; transfers and ticket logins are"
+          + " off (players log in normally)", file, e);
     }
   }
 

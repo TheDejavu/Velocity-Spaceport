@@ -23,6 +23,15 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -32,9 +41,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
@@ -58,6 +70,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public record RouteTicket(UUID uuid, String name, String server, String ip, long issued,
                           long expires, String nonce, String from) {
 
+  private static final Logger LOGGER = LogManager.getLogger(RouteTicket.class);
   static final byte VERSION = 1;
   /** A ticket is valid this long after it was signed. */
   public static final long LIFETIME_MILLIS = 30_000;
@@ -183,6 +196,65 @@ public record RouteTicket(UUID uuid, String name, String server, String ip, long
         return mac.doFinal(data);
       } catch (GeneralSecurityException e) {
         throw new IllegalStateException(e);
+      }
+    }
+
+    /**
+     * Writes a new key file readable by its owner only. On POSIX the file is born with mode 600
+     * (a temporary file in the same directory, moved into place atomically), so the key is never
+     * readable by anyone else, not even briefly; elsewhere it is restricted to the owner with an
+     * ACL right after creation.
+     */
+    private static void create(Path file) throws IOException {
+      byte[] key = new byte[32];
+      RANDOM.nextBytes(key);
+      byte[] content = ("k1=" + Base64.getEncoder().encodeToString(key) + "\n")
+          .getBytes(StandardCharsets.UTF_8);
+      Path dir = file.toAbsolutePath().getParent();
+      if (isPosix(dir)) {
+        Path tmp = Files.createTempFile(dir, ".network-secret", ".tmp",
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        try {
+          Files.write(tmp, content, StandardOpenOption.WRITE,
+              StandardOpenOption.TRUNCATE_EXISTING);
+          Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+          Files.deleteIfExists(tmp);
+        }
+        return;
+      }
+      Files.write(file, content, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+      AclFileAttributeView acl = Files.getFileAttributeView(file, AclFileAttributeView.class);
+      if (acl == null) {
+        LOGGER.warn("Cannot restrict {} to its owner on this file system; make sure only the"
+            + " proxy's user can read it", file);
+        return;
+      }
+      UserPrincipal owner = Files.getOwner(file);
+      acl.setAcl(List.of(AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(owner)
+          .setPermissions(AclEntryPermission.values()).build()));
+    }
+
+    private static boolean isPosix(Path path) {
+      return path.getFileSystem().supportedFileAttributeViews().contains("posix");
+    }
+
+    /**
+     * Refuses a key file others can read: anyone who can read it can mint tickets, and a ticket
+     * skips the Mojang check, so that is logging in as anyone. The file is not fixed silently
+     * (it may be shared on purpose, wrongly); the admin is told to chmod it.
+     */
+    private static void checkPrivate(Path file) throws IOException {
+      if (!isPosix(file.toAbsolutePath())) {
+        return;
+      }
+      Set<PosixFilePermission> perms = Files.getPosixFilePermissions(file);
+      for (PosixFilePermission p : perms) {
+        if (p.name().startsWith("GROUP") || p.name().startsWith("OTHERS")) {
+          throw new IOException(file + " can be read or written by other users ("
+              + PosixFilePermissions.toString(perms) + "); anyone who can read it can log in as"
+              + " any player. Run: chmod 600 " + file);
+        }
       }
     }
 

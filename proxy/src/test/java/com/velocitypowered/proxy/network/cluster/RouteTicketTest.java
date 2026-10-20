@@ -19,11 +19,15 @@ package com.velocitypowered.proxy.network.cluster;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -95,6 +99,25 @@ class RouteTicketTest {
   @Test
   void eachTicketHasItsOwnNonce() {
     assertNotEquals(ticket().nonce(), ticket().nonce());
+  }
+
+  @Test
+  void keyFileIsOwnerOnly(@TempDir Path dir) throws Exception {
+    assumeTrue(dir.getFileSystem().supportedFileAttributeViews().contains("posix"),
+        "POSIX permissions only");
+    Path file = dir.resolve("network-secret.key");
+    RouteTicket.Keys.load(file);
+    assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+  }
+
+  @Test
+  void readableKeyFileIsRefused(@TempDir Path dir) throws Exception {
+    assumeTrue(dir.getFileSystem().supportedFileAttributeViews().contains("posix"),
+        "POSIX permissions only");
+    Path file = dir.resolve("network-secret.key");
+    RouteTicket.Keys.load(file);
+    Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-r--r--"));
+    assertThrows(IOException.class, () -> RouteTicket.Keys.load(file));
   }
 
   @Test
