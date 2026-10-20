@@ -17,6 +17,7 @@
 
 package com.velocitypowered.proxy.network.cluster;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,12 +38,36 @@ public interface NetworkStore extends AutoCloseable {
    *
    * @param proxyId this proxy
    * @param players players on this proxy
+   * @param servers backend servers this proxy has players on
+   * @param instance this process (a random id), to notice another live proxy with the same id
    * @param ttlMillis how long this proxy's record lives without another tick
    * @param candidateGeneration generation to write if the store has none
    * @return the tick result
    */
-  CompletableFuture<Tick> tick(String proxyId, int players, long ttlMillis,
-      String candidateGeneration);
+  CompletableFuture<Tick> tick(String proxyId, int players, Collection<String> servers,
+      String instance, long ttlMillis, String candidateGeneration);
+
+  /**
+   * A tick without servers and instance, for tests and tools.
+   *
+   * @param proxyId this proxy
+   * @param players players on this proxy
+   * @param ttlMillis how long this proxy's record lives without another tick
+   * @param candidateGeneration generation to write if the store has none
+   * @return the tick result
+   */
+  default CompletableFuture<Tick> tick(String proxyId, int players, long ttlMillis,
+      String candidateGeneration) {
+    return tick(proxyId, players, List.of(), "", ttlMillis, candidateGeneration);
+  }
+
+  /**
+   * Reads one proxy's record.
+   *
+   * @param proxyId the proxy
+   * @return its state, if it has a record
+   */
+  CompletableFuture<Optional<ProxyState>> proxy(String proxyId);
 
   /**
    * Takes ownership of a player for this proxy. A player owned by a proxy seen within
@@ -137,8 +162,11 @@ public interface NetworkStore extends AutoCloseable {
    * @param id the proxy id
    * @param players its player count, -1 if its record is gone
    * @param ageMillis time since it was last seen, -1 if its record is gone
+   * @param servers backend servers it has players on
+   * @param instance the process that wrote the record
    */
-  record ProxyState(String id, int players, long ageMillis) {
+  record ProxyState(String id, int players, long ageMillis, List<String> servers,
+                    String instance) {
   }
 
   /**
@@ -147,9 +175,10 @@ public interface NetworkStore extends AutoCloseable {
    * @param generation the store's generation marker
    * @param generationCreated whether this tick created it
    * @param selfExisted whether this proxy's record existed before the tick
+   * @param previousInstance the instance that wrote this proxy's record before, or empty
    * @param proxies every proxy the store knows, this one included
    */
   record Tick(String generation, boolean generationCreated, boolean selfExisted,
-              List<ProxyState> proxies) {
+              String previousInstance, List<ProxyState> proxies) {
   }
 }

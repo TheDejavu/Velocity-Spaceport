@@ -22,13 +22,35 @@ import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import net.kyori.adventure.text.Component;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * A {@link NetworkPlayer} from a store record.
- *
- * @param record the record
+ * A {@link NetworkPlayer} from a store record; its actions go to wherever the player is.
  */
-public record VelocityNetworkPlayer(PlayerRecord record) implements NetworkPlayer {
+public final class VelocityNetworkPlayer implements NetworkPlayer {
+
+  /** Carries out the actions, locally or across the network. */
+  public interface Actions {
+    CompletableFuture<Boolean> message(UUID player, Component message);
+
+    CompletableFuture<Boolean> connect(UUID player, String server);
+
+    CompletableFuture<Boolean> disconnect(UUID player, Component reason);
+  }
+
+  private final PlayerRecord record;
+  private final @Nullable Actions actions;
+
+  public VelocityNetworkPlayer(PlayerRecord record, @Nullable Actions actions) {
+    this.record = record;
+    this.actions = actions;
+  }
+
+  public PlayerRecord record() {
+    return record;
+  }
 
   @Override
   public UUID getUniqueId() {
@@ -53,6 +75,24 @@ public record VelocityNetworkPlayer(PlayerRecord record) implements NetworkPlaye
   @Override
   public Instant getLoginTime() {
     return Instant.ofEpochMilli(record.since());
+  }
+
+  @Override
+  public CompletableFuture<Boolean> sendMessage(Component message) {
+    return actions == null ? CompletableFuture.completedFuture(false)
+        : actions.message(record.uuid(), message);
+  }
+
+  @Override
+  public CompletableFuture<Boolean> connect(String server) {
+    return actions == null ? CompletableFuture.completedFuture(false)
+        : actions.connect(record.uuid(), server);
+  }
+
+  @Override
+  public CompletableFuture<Boolean> disconnect(Component reason) {
+    return actions == null ? CompletableFuture.completedFuture(false)
+        : actions.disconnect(record.uuid(), reason);
   }
 
   @Override

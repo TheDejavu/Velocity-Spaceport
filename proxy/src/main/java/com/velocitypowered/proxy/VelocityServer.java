@@ -42,12 +42,14 @@ import com.velocitypowered.api.util.ProxyVersion;
 import com.velocitypowered.proxy.command.VelocityCommandManager;
 import com.velocitypowered.proxy.command.builtin.CallbackCommand;
 import com.velocitypowered.proxy.command.builtin.GlistCommand;
+import com.velocitypowered.proxy.command.builtin.NetworkCommands;
 import com.velocitypowered.proxy.command.builtin.SendCommand;
 import com.velocitypowered.proxy.command.builtin.ServerCommand;
 import com.velocitypowered.proxy.command.builtin.ShutdownCommand;
 import com.velocitypowered.proxy.command.builtin.VelocityCommand;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
+import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
@@ -57,6 +59,7 @@ import com.velocitypowered.proxy.event.VelocityEventManager;
 import com.velocitypowered.proxy.network.ConnectionManager;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.network.cluster.LocalStore;
+import com.velocitypowered.proxy.network.cluster.NetworkActions;
 import com.velocitypowered.proxy.network.cluster.NetworkStore;
 import com.velocitypowered.proxy.network.cluster.RedisStore;
 import com.velocitypowered.proxy.network.cluster.VelocityNetwork;
@@ -92,10 +95,12 @@ import java.security.KeyPair;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -176,7 +181,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
   private @Nullable ClusterService cluster;
-  private VelocityNetwork network = new VelocityNetwork(this, null);
+  private VelocityNetwork network = new VelocityNetwork(this, null, null);
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
@@ -885,6 +890,18 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
       }
 
       @Override
+      public Collection<String> localServers() {
+        Set<String> names = new HashSet<>();
+        for (ConnectedPlayer p : connectionsByUuid.values()) {
+          VelocityServerConnection connection = p.getConnectedServer();
+          if (connection != null) {
+            names.add(connection.getServerInfo().getName());
+          }
+        }
+        return names;
+      }
+
+      @Override
       public void disconnectDuplicate(UUID player) {
         ConnectedPlayer p = connectionsByUuid.get(player);
         if (p != null) {
@@ -897,8 +914,11 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         eventManager.fireAndForget(event);
       }
     });
+    NetworkActions actions = new NetworkActions(this, cluster);
+    cluster.setActions(actions);
     cluster.start();
-    network = new VelocityNetwork(this, cluster);
+    network = new VelocityNetwork(this, cluster, actions);
+    NetworkCommands.register(this);
   }
 
   @Override

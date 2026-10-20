@@ -30,6 +30,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +60,9 @@ public final class ClusterService implements AutoCloseable {
   /** What the service needs from the proxy. */
   public interface Host {
     int localPlayerCount();
+
+    /** Backend servers this proxy has players on. */
+    Collection<String> localServers();
 
     /** Disconnects a local player that logged in elsewhere. */
     void disconnectDuplicate(UUID player);
@@ -101,6 +105,11 @@ public final class ClusterService implements AutoCloseable {
   private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
   private final Map<String, Long> sweepAttempts = new HashMap<>();
   private final String candidateGeneration = UUID.randomUUID().toString();
+  private final String instance = UUID.randomUUID().toString();
+  private final MessageBus bus;
+  private volatile boolean duplicateId;
+  private long lastClash;
+  private volatile VelocityNetworkPlayer.@Nullable Actions actions;
   private volatile long epoch;
   private volatile @Nullable String generation;
   private volatile long lastTickOk;
@@ -141,6 +150,7 @@ public final class ClusterService implements AutoCloseable {
     this.host = host;
     this.newestWins = config.newestWins();
     this.localOnlyWhenDown = config.localOnlyWhenDown();
+    this.bus = new MessageBus(store, proxyId, timer);
   }
 
   /**
@@ -149,6 +159,7 @@ public final class ClusterService implements AutoCloseable {
    * store is unreachable the proxy still starts, not ready, and keeps trying.
    */
   public void start() {
+    refuseIfIdInUse();
     long wall = System.currentTimeMillis();
     try {
       // A previous run of this id may have crashed: its players are not here any more.
@@ -161,12 +172,8 @@ public final class ClusterService implements AutoCloseable {
       epoch = Math.max(wall, store.nextEpoch().get(5, TimeUnit.SECONDS));
       store.subscribe("msg:all", this::onMessage).get(5, TimeUnit.SECONDS);
       store.subscribe("msg:" + proxyId, this::onMessage).get(5, TimeUnit.SECONDS);
-      Tick first = store.tick(proxyId, host.localPlayerCount(), TTL_MILLIS, candidateGeneration)
-          .get(5, TimeUnit.SECONDS);
-      if (first.selfExisted()) {
-        logger.error("Another live proxy uses the network id {}; give every proxy its own"
-            + " proxy-id", proxyId);
-      }
+      Tick first = store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance,
+          TTL_MILLIS, candidateGeneration).get(5, TimeUnit.SECONDS);
       applyTick(first);
       logger.info("Joined the network as {} ({} proxies, {} players)", proxyId,
           first.proxies().size(), getPlayerCount());
@@ -195,7 +202,8 @@ public final class ClusterService implements AutoCloseable {
       return;
     }
     tickInFlight = true;
-    store.tick(proxyId, host.localPlayerCount(), TTL_MILLIS, candidateGeneration)
+    store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance, TTL_MILLIS,
+            candidateGeneration)
         .orTimeout(2, TimeUnit.SECONDS)
         .whenComplete((t, ex) -> timer.execute(() -> {
           tickInFlight = false;
@@ -231,6 +239,20 @@ public final class ClusterService implements AutoCloseable {
       resync = true;
     }
     generation = t.generation();
+    if (!t.previousInstance().isEmpty() && !t.previousInstance().equals(instance)) {
+      lastClash = System.currentTimeMillis();
+    }
+    // Sticky: two writers alternate, so some ticks still see our own instance.
+    boolean clash = lastClash != 0 && System.currentTimeMillis() - lastClash < DEAD_AFTER_MILLIS;
+    if (clash != duplicateId) {
+      duplicateId = clash;
+      if (clash) {
+        logger.error("ANOTHER LIVE PROXY IS USING THE NETWORK ID {}! This proxy stops taking"
+            + " players until it is gone. Give every proxy its own [network] proxy-id.", proxyId);
+      } else {
+        logger.info("Network id {} is ours alone again", proxyId);
+      }
+    }
     if (storeDown) {
       storeDown = false;
       logger.info("Network store reachable again");
@@ -297,7 +319,7 @@ public final class ClusterService implements AutoCloseable {
     PlayerRecord record = new PlayerRecord(uuid, name, proxyId,
         ThreadLocalRandom.current().nextLong(), null, ip, System.currentTimeMillis());
     CompletableFuture<LoginResult> result = new CompletableFuture<>();
-    if (!isReady() && !localOnlyWhenDown) {
+    if (duplicateId || (!isReady() && !localOnlyWhenDown)) {
       result.complete(LoginResult.denied(UNAVAILABLE));
       return result;
     }
@@ -373,7 +395,7 @@ public final class ClusterService implements AutoCloseable {
       sessions.put(record.uuid(), s);
       result.complete(new LoginResult(record.session(), null));
       publish("msg:all", frame(JOIN, record.uuid(), record.name(), null, null, record.since()));
-      host.fire(new NetworkPlayerJoinEvent(new VelocityNetworkPlayer(s.current())));
+      host.fire(new NetworkPlayerJoinEvent(new VelocityNetworkPlayer(s.current(), actions)));
     }
   }
 
@@ -397,7 +419,7 @@ public final class ClusterService implements AutoCloseable {
     });
     PlayerRecord r = s.current();
     publish("msg:all", frame(SWITCH, uuid, r.name(), server, previous, r.since()));
-    host.fire(new NetworkPlayerServerChangeEvent(new VelocityNetworkPlayer(r), previous));
+    host.fire(new NetworkPlayerServerChangeEvent(new VelocityNetworkPlayer(r, actions), previous));
   }
 
   /**
@@ -414,7 +436,7 @@ public final class ClusterService implements AutoCloseable {
     release(uuid, session, 0);
     PlayerRecord r = s.current();
     publish("msg:all", frame(QUIT, uuid, r.name(), r.server(), null, r.since()));
-    host.fire(new NetworkPlayerQuitEvent(new VelocityNetworkPlayer(r)));
+    host.fire(new NetworkPlayerQuitEvent(new VelocityNetworkPlayer(r, actions)));
   }
 
   private void release(UUID uuid, long session, int attempt) {
@@ -455,6 +477,10 @@ public final class ClusterService implements AutoCloseable {
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload));
       byte type = in.readByte();
+      if (type == MessageBus.REQUEST || type == MessageBus.RESPONSE) {
+        bus.onFrame(type, in);
+        return;
+      }
       String from = in.readUTF();
       UUID uuid = new UUID(in.readLong(), in.readLong());
       String name = in.readUTF();
@@ -465,7 +491,7 @@ public final class ClusterService implements AutoCloseable {
         return;
       }
       VelocityNetworkPlayer player = new VelocityNetworkPlayer(new PlayerRecord(uuid, name, from,
-          0, server.isEmpty() ? null : server, "", since));
+          0, server.isEmpty() ? null : server, "", since), actions);
       switch (type) {
         case JOIN -> host.fire(new NetworkPlayerJoinEvent(player));
         case QUIT -> host.fire(new NetworkPlayerQuitEvent(player));
@@ -492,6 +518,34 @@ public final class ClusterService implements AutoCloseable {
         .ifPresent(p -> store.release(uuid, proxyId, p.session())));
   }
 
+  /**
+   * Refuses to start when another proxy that is still running uses this proxy's id: its record
+   * keeps being refreshed. A record left by a crashed previous run stops changing.
+   */
+  private void refuseIfIdInUse() {
+    try {
+      Optional<ProxyState> before = store.proxy(proxyId).get(5, TimeUnit.SECONDS);
+      if (before.isEmpty() || before.get().ageMillis() >= DEAD_AFTER_MILLIS) {
+        return;
+      }
+      Thread.sleep(4 * TICK_MILLIS);
+      Optional<ProxyState> after = store.proxy(proxyId).get(5, TimeUnit.SECONDS);
+      if (after.isPresent() && after.get().ageMillis() < 3 * TICK_MILLIS) {
+        throw new IllegalStateException("Another live proxy is using the network id " + proxyId
+            + ". Give every proxy its own [network] proxy-id.");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+      logger.warn("Could not check whether the network id {} is free: {}", proxyId,
+          rootMessage(e));
+    }
+  }
+
+  public MessageBus bus() {
+    return bus;
+  }
+
   public String proxyId() {
     return proxyId;
   }
@@ -514,6 +568,25 @@ public final class ClusterService implements AutoCloseable {
     return remotePlayers + host.localPlayerCount();
   }
 
+  /**
+   * Returns the other proxies alive at the last tick.
+   *
+   * @return the live remote proxies
+   */
+  public List<ProxyState> liveRemotes() {
+    return proxies.stream().filter(p -> !p.id().equals(proxyId) && p.players() >= 0
+        && p.ageMillis() < DEAD_AFTER_MILLIS).toList();
+  }
+
+  /**
+   * Sets what network players in events use for their actions.
+   *
+   * @param actions the actions
+   */
+  public void setActions(VelocityNetworkPlayer.Actions actions) {
+    this.actions = actions;
+  }
+
   public List<ProxyState> proxies() {
     return proxies;
   }
@@ -525,7 +598,8 @@ public final class ClusterService implements AutoCloseable {
    * @return true if ready
    */
   public boolean isReady() {
-    return !storeDown || System.currentTimeMillis() - lastTickOk < READY_GRACE_MILLIS;
+    return !duplicateId
+        && (!storeDown || System.currentTimeMillis() - lastTickOk < READY_GRACE_MILLIS);
   }
 
   Optional<Session> session(UUID uuid) {

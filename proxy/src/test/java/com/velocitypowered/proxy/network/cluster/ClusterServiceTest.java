@@ -19,6 +19,7 @@ package com.velocitypowered.proxy.network.cluster;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.velocitypowered.api.event.network.NetworkPlayerJoinEvent;
@@ -56,6 +57,11 @@ class ClusterServiceTest {
     @Override
     public int localPlayerCount() {
       return players.size();
+    }
+
+    @Override
+    public java.util.Collection<String> localServers() {
+      return List.of();
     }
 
     @Override
@@ -243,6 +249,24 @@ class ClusterServiceTest {
     assertNull(a.login(steve, "Steve").denyReason());
     store.setDown(false);
     await(() -> owner(steve).isPresent());
+  }
+
+  @Test
+  void secondLiveProxyWithSameIdRefusesToStart() {
+    proxy("a");
+    FakeProxy twin = new FakeProxy();
+    twin.service = new ClusterService(new NetworkConfig(true, "a", "", "", "local", "newest-wins",
+        "stop-logins"), "a", store, twin);
+    assertThrows(IllegalStateException.class, twin.service::start);
+  }
+
+  @Test
+  void idClashAtRuntimeStopsLogins() throws Exception {
+    FakeProxy a = proxy("a");
+    assertTrue(a.service.isReady());
+    store.tick("a", 0, List.of(), "intruder", 15_000, "x").join();
+    await(() -> !a.service.isReady());
+    assertEquals(ClusterService.UNAVAILABLE, a.login(UUID.randomUUID(), "Steve").denyReason());
   }
 
   @Test

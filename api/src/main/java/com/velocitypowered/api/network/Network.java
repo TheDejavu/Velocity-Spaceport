@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import net.kyori.adventure.text.Component;
 
 /**
  * Spaceport: the network of proxies this proxy belongs to. When the network is disabled it
@@ -62,4 +63,29 @@ public interface Network {
    * @return the player, if online
    */
   CompletableFuture<Optional<NetworkPlayer>> getPlayer(String username);
+
+  /**
+   * Lists every player on the network by asking every proxy. Players on a proxy that does not
+   * answer in time are missing.
+   *
+   * @return the players
+   */
+  CompletableFuture<Collection<NetworkPlayer>> getPlayers();
+
+  /**
+   * Sends a chat message to every player on the network.
+   *
+   * @param message the message
+   * @return completes when every proxy got it, or failed
+   */
+  CompletableFuture<Void> broadcast(Component message);
+
+  /**
+   * Runs a command as the console of a proxy of the network.
+   *
+   * @param proxyId the proxy
+   * @param command the command line, without a leading slash
+   * @return true if the proxy ran it and the command succeeded
+   */
+  CompletableFuture<Boolean> executeCommand(String proxyId, String command);
 }

@@ -59,7 +59,7 @@ public class SendCommand {
             source.getPermissionValue("velocity.command.send") == Tristate.TRUE)
         .executes(this::usage);
     final RequiredArgumentBuilder<CommandSource, String> playerNode = BrigadierCommand
-        .requiredArgumentBuilder(PLAYER_ARG, StringArgumentType.word())
+        .requiredArgumentBuilder(PLAYER_ARG, StringArgumentType.string()) // "server:name" needs quotes
         .suggests((context, builder) -> {
           final String argument = context.getArguments().containsKey(PLAYER_ARG)
               ? context.getArgument(PLAYER_ARG, String.class)
@@ -127,6 +127,10 @@ public class SendCommand {
       return 0;
     }
 
+    if (server.getNetwork().isEnabled()) {
+      return sendAcrossNetwork(context.getSource(), player, maybeServer.get());
+    }
+
     final RegisteredServer targetServer = maybeServer.get();
 
     final Optional<Player> maybePlayer = server.getPlayer(player);
@@ -164,6 +168,39 @@ public class SendCommand {
 
     // The player at this point must be present
     maybePlayer.orElseThrow().createConnectionRequest(targetServer).fireAndForget();
+    return Command.SINGLE_SUCCESS;
+  }
+
+  /**
+   * Spaceport: {@code /send <player|all|current|server:name> <server>} for players on any proxy.
+   */
+  private int sendAcrossNetwork(CommandSource source, String target, RegisteredServer to) {
+    final String toName = to.getServerInfo().getName();
+    final String from;
+    if (target.equals("all")) {
+      from = null;
+    } else if (target.equals("current")) {
+      if (!(source instanceof Player player) || player.getCurrentServer().isEmpty()) {
+        source.sendMessage(CommandMessages.PLAYERS_ONLY);
+        return 0;
+      }
+      from = player.getCurrentServer().get().getServerInfo().getName();
+    } else if (target.startsWith("server:")) {
+      from = target.substring("server:".length());
+    } else {
+      server.getNetwork().getPlayer(target).thenAccept(p -> {
+        if (p.isEmpty()) {
+          source.sendMessage(
+              CommandMessages.PLAYER_NOT_FOUND.arguments(Argument.string("player", target)));
+        } else {
+          p.get().connect(toName);
+        }
+      });
+      return Command.SINGLE_SUCCESS;
+    }
+    server.getNetwork().getPlayers().thenAccept(players -> players.stream()
+        .filter(p -> from == null || p.getServerName().map(from::equalsIgnoreCase).orElse(false))
+        .forEach(p -> p.connect(toName)));
     return Command.SINGLE_SUCCESS;
   }
 }

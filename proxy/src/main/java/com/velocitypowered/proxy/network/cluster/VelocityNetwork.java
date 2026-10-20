@@ -22,6 +22,7 @@ import com.velocitypowered.api.network.NetworkPlayer;
 import com.velocitypowered.api.network.ProxyNode;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ServerConnection;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.ProxyState;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import net.kyori.adventure.text.Component;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
@@ -43,14 +45,30 @@ public final class VelocityNetwork implements Network {
 
   private final VelocityServer server;
   private final @Nullable ClusterService cluster;
+  private final @Nullable NetworkActions remote;
+  private final VelocityNetworkPlayer.Actions actions;
 
-  public VelocityNetwork(VelocityServer server, @Nullable ClusterService cluster) {
+  /**
+   * Creates the network view.
+   *
+   * @param server the proxy
+   * @param cluster the cluster, or null when the network is off
+   * @param remote the cluster's actions, or null when the network is off
+   */
+  public VelocityNetwork(VelocityServer server, @Nullable ClusterService cluster,
+      @Nullable NetworkActions remote) {
     this.server = server;
     this.cluster = cluster;
+    this.remote = remote;
+    this.actions = remote != null ? remote : new LocalActions();
   }
 
   public @Nullable ClusterService cluster() {
     return cluster;
+  }
+
+  public @Nullable NetworkActions actions() {
+    return remote;
   }
 
   @Override
@@ -70,14 +88,10 @@ public final class VelocityNetwork implements Network {
 
   @Override
   public Collection<ProxyNode> getProxies() {
-    if (cluster == null) {
-      return List.of(new Node(getProxyId(), server.getPlayerCount()));
-    }
     List<ProxyNode> nodes = new ArrayList<>();
-    for (ProxyState p : cluster.proxies()) {
-      if (p.id().equals(cluster.proxyId())) {
-        nodes.add(new Node(p.id(), server.getPlayerCount()));
-      } else if (p.players() >= 0 && p.ageMillis() < ClusterService.DEAD_AFTER_MILLIS) {
+    nodes.add(new Node(getProxyId(), server.getPlayerCount()));
+    if (cluster != null) {
+      for (ProxyState p : cluster.liveRemotes()) {
         nodes.add(new Node(p.id(), p.players()));
       }
     }
@@ -90,7 +104,7 @@ public final class VelocityNetwork implements Network {
     if (local.isPresent() || cluster == null) {
       return CompletableFuture.completedFuture(local.map(this::local));
     }
-    return cluster.store().player(uuid).thenApply(r -> r.map(VelocityNetworkPlayer::new));
+    return cluster.store().player(uuid).thenApply(r -> r.map(this::wrap));
   }
 
   @Override
@@ -104,11 +118,83 @@ public final class VelocityNetwork implements Network {
         : getPlayer(id.get()));
   }
 
+  @Override
+  public CompletableFuture<Collection<NetworkPlayer>> getPlayers() {
+    if (remote == null) {
+      List<NetworkPlayer> players = new ArrayList<>();
+      server.getAllPlayers().forEach(p -> players.add(local(p)));
+      return CompletableFuture.completedFuture(players);
+    }
+    return remote.players().thenApply(records -> {
+      List<NetworkPlayer> players = new ArrayList<>(records.size());
+      records.forEach(r -> players.add(wrap(r)));
+      return players;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Void> broadcast(Component message) {
+    if (remote == null) {
+      server.sendMessage(message);
+      return CompletableFuture.completedFuture(null);
+    }
+    return remote.broadcast(message);
+  }
+
+  @Override
+  public CompletableFuture<Boolean> executeCommand(String proxyId, String command) {
+    if (remote == null) {
+      return proxyId.equals(getProxyId())
+          ? server.getCommandManager().executeAsync(server.getConsoleCommandSource(), command)
+          : CompletableFuture.completedFuture(false);
+    }
+    return remote.command(proxyId, command);
+  }
+
+  /**
+   * Wraps a record as an API player.
+   *
+   * @param record the record
+   * @return the player
+   */
+  public NetworkPlayer wrap(PlayerRecord record) {
+    return new VelocityNetworkPlayer(record, actions);
+  }
+
   private NetworkPlayer local(Player p) {
     long since = cluster == null ? 0 : cluster.session(p.getUniqueId())
         .map(s -> s.record.since()).orElse(0L);
-    return new VelocityNetworkPlayer(new PlayerRecord(p.getUniqueId(), p.getUsername(),
-        getProxyId(), 0, p.getCurrentServer().map(ServerConnection::getServerInfo)
-        .map(i -> i.getName()).orElse(null), p.getRemoteAddress().getHostString(), since));
+    return wrap(new PlayerRecord(p.getUniqueId(), p.getUsername(), getProxyId(), 0,
+        p.getCurrentServer().map(ServerConnection::getServerInfo).map(i -> i.getName())
+            .orElse(null), p.getRemoteAddress().getAddress().getHostAddress(), since));
+  }
+
+  /** Actions on this proxy's own players, when the network is off. */
+  private final class LocalActions implements VelocityNetworkPlayer.Actions {
+    @Override
+    public CompletableFuture<Boolean> message(UUID player, Component message) {
+      return CompletableFuture.completedFuture(server.getPlayer(player).map(p -> {
+        p.sendMessage(message);
+        return true;
+      }).orElse(false));
+    }
+
+    @Override
+    public CompletableFuture<Boolean> connect(UUID player, String target) {
+      Optional<Player> p = server.getPlayer(player);
+      Optional<RegisteredServer> rs = server.getServer(target);
+      if (p.isEmpty() || rs.isEmpty()) {
+        return CompletableFuture.completedFuture(false);
+      }
+      return p.get().createConnectionRequest(rs.get()).connect().thenApply(r -> r.isSuccessful());
+    }
+
+    @Override
+    public CompletableFuture<Boolean> disconnect(UUID player, Component reason) {
+      return CompletableFuture.completedFuture(server.getPlayer(player).map(p -> {
+        p.disconnect(reason);
+        return true;
+      }).orElse(false));
+    }
   }
 }

@@ -29,6 +29,7 @@ import com.velocitypowered.api.util.UuidUtils;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
+import com.velocitypowered.proxy.network.cluster.NetworkActions;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataInput;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataOutput;
@@ -322,6 +323,36 @@ public class BungeeCordMessageResponder {
         : LEGACY_CHANNEL;
   }
 
+  /**
+   * Spaceport: sends a BungeeCord channel message to a backend server through one of its players,
+   * as Forward does.
+   *
+   * @param server the server
+   * @param data the message
+   * @return false if nobody on this proxy is on that server
+   */
+  public static boolean forwardToServer(RegisteredServer server, byte[] data) {
+    return ((VelocityRegisteredServer) server).sendPluginMessage(LEGACY_CHANNEL,
+        Unpooled.wrappedBuffer(data));
+  }
+
+  /**
+   * Spaceport: sends a BungeeCord channel message to the backend server of a player, as
+   * ForwardToPlayer does.
+   *
+   * @param player the player
+   * @param data the message
+   * @return false if the player is not connected to a backend
+   */
+  public static boolean forwardToPlayer(ConnectedPlayer player, byte[] data) {
+    VelocityServerConnection connection = player.getConnectedServer();
+    if (connection == null || connection.getConnection() == null) {
+      return false;
+    }
+    sendServerResponse(player, Unpooled.wrappedBuffer(data));
+    return true;
+  }
+
   // Note: this method will always release the buffer!
   private void sendResponseOnConnection(ByteBuf buf) {
     sendServerResponse(this.player, buf);
@@ -346,6 +377,12 @@ public class BungeeCordMessageResponder {
 
     final ByteBufDataInput in = new ByteBufDataInput(message.content());
     final String subChannel = in.readUTF();
+    // Spaceport: network-wide answers when the network is enabled
+    final NetworkActions networkActions = proxy.getNetwork().actions();
+    if (networkActions != null
+        && new NetworkBungeeBridge(proxy, networkActions, player).process(subChannel, in)) {
+      return true;
+    }
     switch (subChannel) {
       case "GetPlayerServer" -> this.processGetPlayerServer(in);
       case "ForwardToPlayer" -> this.processForwardToPlayer(in);

@@ -18,6 +18,7 @@
 package com.velocitypowered.proxy.network.cluster;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -37,7 +38,8 @@ import java.util.function.LongSupplier;
  */
 public final class LocalStore implements NetworkStore {
 
-  private record ProxyEntry(int players, long seen, long expires) {
+  private record ProxyEntry(int players, long seen, long expires, List<String> servers,
+                            String instance) {
   }
 
   private record Owned(PlayerRecord record, long epoch) {
@@ -95,25 +97,36 @@ public final class LocalStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Tick> tick(String proxyId, int count, long ttlMillis,
-      String candidateGeneration) {
+  public CompletableFuture<Tick> tick(String proxyId, int count, Collection<String> servers,
+      String instance, long ttlMillis, String candidateGeneration) {
     return run(() -> {
       long now = clock.getAsLong();
       boolean created = generation == null;
       if (created) {
         generation = candidateGeneration;
       }
-      final boolean existed = live(proxyId, now) != null;
-      proxies.put(proxyId, new ProxyEntry(count, now, now + ttlMillis));
+      final ProxyEntry before = live(proxyId, now);
+      proxies.put(proxyId, new ProxyEntry(count, now, now + ttlMillis, List.copyOf(servers),
+          instance));
       members.computeIfAbsent(proxyId, k -> new HashSet<>());
       List<ProxyState> states = new ArrayList<>();
       for (String id : members.keySet()) {
-        ProxyEntry e = live(id, now);
-        states.add(e == null ? new ProxyState(id, -1, -1)
-            : new ProxyState(id, e.players(), now - e.seen()));
+        states.add(state(id, now).orElse(new ProxyState(id, -1, -1, List.of(), "")));
       }
-      return new Tick(generation, created, existed, states);
+      return new Tick(generation, created, before != null,
+          before == null ? "" : before.instance(), states);
     });
+  }
+
+  private Optional<ProxyState> state(String id, long now) {
+    ProxyEntry e = live(id, now);
+    return e == null ? Optional.empty() : Optional.of(new ProxyState(id, e.players(),
+        now - e.seen(), e.servers(), e.instance()));
+  }
+
+  @Override
+  public CompletableFuture<Optional<ProxyState>> proxy(String proxyId) {
+    return run(() -> state(proxyId, clock.getAsLong()));
   }
 
   @Override

@@ -27,12 +27,17 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.ArgumentCommandNode;
 import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.CommandSource;
+import com.velocitypowered.api.network.NetworkPlayer;
 import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.proxy.plugin.virtual.VelocityVirtualPlugin;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
@@ -102,6 +107,9 @@ public class GlistCommand {
   private int serverCount(final CommandContext<CommandSource> context) {
     final CommandSource source = context.getSource();
     final String serverName = getString(context, SERVER_ARG);
+    if (server.getNetwork().isEnabled()) {
+      return networkServerCount(source, serverName);
+    }
     if (serverName.equalsIgnoreCase("all")) {
       for (final RegisteredServer server : BuiltinCommandUtil.sortedServerList(server)) {
         sendServerPlayers(source, server, true);
@@ -117,6 +125,39 @@ public class GlistCommand {
       }
       sendServerPlayers(source, registeredServer.get(), false);
     }
+    return Command.SINGLE_SUCCESS;
+  }
+
+  /**
+   * Spaceport: {@code /glist <server|all>} with the players of every proxy.
+   */
+  private int networkServerCount(CommandSource source, String serverName) {
+    final boolean all = serverName.equalsIgnoreCase("all");
+    final Optional<RegisteredServer> one = server.getServer(serverName);
+    if (!all && one.isEmpty()) {
+      source.sendMessage(CommandMessages.SERVER_DOES_NOT_EXIST
+          .arguments(Argument.string("server", serverName)));
+      return -1;
+    }
+    server.getNetwork().getPlayers().thenAccept(players -> {
+      final Map<String, List<String>> byServer = new HashMap<>();
+      for (NetworkPlayer p : players) {
+        p.getServerName().ifPresent(s -> byServer.computeIfAbsent(s.toLowerCase(Locale.ROOT),
+            k -> new ArrayList<>()).add(p.getUsername()));
+      }
+      final List<RegisteredServer> servers = all ? BuiltinCommandUtil.sortedServerList(server)
+          : List.of(one.get());
+      for (RegisteredServer rs : servers) {
+        final String name = rs.getServerInfo().getName();
+        final List<String> names = byServer.getOrDefault(name.toLowerCase(Locale.ROOT), List.of());
+        if (!names.isEmpty() || !all) {
+          source.sendMessage(serverLine(name, names));
+        }
+      }
+      if (all) {
+        sendTotalProxyCount(source);
+      }
+    });
     return Command.SINGLE_SUCCESS;
   }
 
@@ -139,22 +180,25 @@ public class GlistCommand {
       return;
     }
 
+    target.sendMessage(serverLine(server.getServerInfo().getName(),
+        onServer.stream().map(Player::getUsername).toList()));
+  }
+
+  private static Component serverLine(final String serverName, final List<String> names) {
     final TextComponent.Builder builder = Component.text()
-        .append(Component.text("[" + server.getServerInfo().getName() + "] ",
-            NamedTextColor.DARK_AQUA))
-        .append(Component.text("(" + onServer.size() + ")", NamedTextColor.GRAY))
+        .append(Component.text("[" + serverName + "] ", NamedTextColor.DARK_AQUA))
+        .append(Component.text("(" + names.size() + ")", NamedTextColor.GRAY))
         .append(Component.text(": "))
         .resetStyle();
 
-    for (int i = 0; i < onServer.size(); i++) {
-      final Player player = onServer.get(i);
-      builder.append(Component.text(player.getUsername()));
+    for (int i = 0; i < names.size(); i++) {
+      builder.append(Component.text(names.get(i)));
 
-      if (i + 1 < onServer.size()) {
+      if (i + 1 < names.size()) {
         builder.append(Component.text(", "));
       }
     }
 
-    target.sendMessage(builder.build());
+    return builder.build();
   }
 }

@@ -33,6 +33,7 @@ import io.lettuce.core.resource.DefaultClientResources;
 import io.lettuce.core.resource.Delay;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -64,23 +65,35 @@ public final class RedisStore implements NetworkStore {
   private static final String NOW = "local t = redis.call('TIME') "
       + "local now = t[1] * 1000 + math.floor(t[2] / 1000)\n";
 
-  // KEYS: proxies set, gen, own proxy hash. ARGV: id, players, ttl, candidate gen, proxy prefix.
+  // KEYS: proxies set, gen, own proxy hash. ARGV: id, players, ttl, candidate gen, proxy prefix,
+  // servers (comma separated), instance.
   private static final String TICK = NOW + """
       local created = 0
       local g = redis.call('GET', KEYS[2])
       if not g then redis.call('SET', KEYS[2], ARGV[4]); g = ARGV[4]; created = 1 end
       local existed = redis.call('EXISTS', KEYS[3])
-      redis.call('HSET', KEYS[3], 'players', ARGV[2], 'seen', now)
+      local previous = redis.call('HGET', KEYS[3], 'instance') or ''
+      redis.call('HSET', KEYS[3], 'players', ARGV[2], 'seen', now, 'servers', ARGV[6],
+          'instance', ARGV[7])
       redis.call('PEXPIRE', KEYS[3], ARGV[3])
       redis.call('SADD', KEYS[1], ARGV[1])
-      local out = {g, created, existed}
+      local out = {g, created, existed, previous}
       for _, id in ipairs(redis.call('SMEMBERS', KEYS[1])) do
-        local v = redis.call('HMGET', ARGV[5] .. id, 'players', 'seen')
+        local v = redis.call('HMGET', ARGV[5] .. id, 'players', 'seen', 'servers', 'instance')
         out[#out + 1] = id
         out[#out + 1] = v[1] or '-1'
         out[#out + 1] = v[2] and tostring(now - tonumber(v[2])) or '-1'
+        out[#out + 1] = v[3] or ''
+        out[#out + 1] = v[4] or ''
       end
       return out
+      """;
+
+  // KEYS: proxy hash. Returns {players, age, servers, instance} or an empty list.
+  private static final String PROXY = NOW + """
+      local v = redis.call('HMGET', KEYS[1], 'players', 'seen', 'servers', 'instance')
+      if not v[2] then return {} end
+      return {v[1], tostring(now - tonumber(v[2])), v[3] or '', v[4] or ''}
       """;
 
   // KEYS: player hash, name key, own members set. ARGV: proxy, epoch, session, name, server, ip,
@@ -242,20 +255,35 @@ public final class RedisStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Tick> tick(String proxyId, int players, long ttlMillis,
-      String candidateGeneration) {
+  public CompletableFuture<Tick> tick(String proxyId, int players, Collection<String> servers,
+      String instance, long ttlMillis, String candidateGeneration) {
     return call(redis -> redis.<List<Object>>eval(TICK, ScriptOutputType.MULTI,
             new String[] {net + "proxies", net + "gen", net + "proxy:" + proxyId},
             proxyId, Integer.toString(players), Long.toString(ttlMillis), candidateGeneration,
-            net + "proxy:"))
+            net + "proxy:", String.join(",", servers), instance))
         .thenApply(r -> {
           List<ProxyState> proxies = new ArrayList<>();
-          for (int i = 3; i + 2 < r.size(); i += 3) {
+          for (int i = 4; i + 4 < r.size(); i += 5) {
             proxies.add(new ProxyState((String) r.get(i), Integer.parseInt((String) r.get(i + 1)),
-                Long.parseLong((String) r.get(i + 2))));
+                Long.parseLong((String) r.get(i + 2)), servers((String) r.get(i + 3)),
+                (String) r.get(i + 4)));
           }
-          return new Tick((String) r.get(0), (Long) r.get(1) == 1, (Long) r.get(2) == 1, proxies);
+          return new Tick((String) r.get(0), (Long) r.get(1) == 1, (Long) r.get(2) == 1,
+              (String) r.get(3), proxies);
         });
+  }
+
+  private static List<String> servers(String joined) {
+    return joined.isEmpty() ? List.of() : List.of(joined.split(","));
+  }
+
+  @Override
+  public CompletableFuture<Optional<ProxyState>> proxy(String proxyId) {
+    return call(redis -> redis.<List<Object>>eval(PROXY, ScriptOutputType.MULTI,
+            new String[] {net + "proxy:" + proxyId}))
+        .thenApply(r -> r.isEmpty() ? Optional.empty() : Optional.of(new ProxyState(proxyId,
+            Integer.parseInt((String) r.get(0)), Long.parseLong((String) r.get(1)),
+            servers((String) r.get(2)), (String) r.get(3))));
   }
 
   @Override
