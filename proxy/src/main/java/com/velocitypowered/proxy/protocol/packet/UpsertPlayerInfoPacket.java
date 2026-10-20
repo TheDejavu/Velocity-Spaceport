@@ -24,6 +24,7 @@ import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
 import com.velocitypowered.proxy.protocol.packet.chat.RemoteChatSession;
+import com.velocitypowered.proxy.tablist.SharedProfiles;
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -135,11 +136,11 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
 
   public enum Action {
     ADD_PLAYER((ignored, buf, info) -> { // read
-      info.profile = new GameProfile(
+      info.profile = SharedProfiles.share(new GameProfile(
           info.profileId,
           ProtocolUtils.readString(buf, 16),
           ProtocolUtils.readProperties(buf)
-      );
+      ));
     }, (ignored, buf, info) -> { // write
       ProtocolUtils.writeString(buf, info.profile.getName());
       ProtocolUtils.writeProperties(buf, info.profile.getProperties());
