@@ -198,19 +198,19 @@ class ClusterServiceTest {
   }
 
   @Test
-  void resyncKicksLocalCopyIfAnotherProxyTookThePlayer() throws Exception {
+  void resyncLeavesOneCopyAfterDataLoss() throws Exception {
     FakeProxy a = proxy("a");
     FakeProxy b = proxy("b");
     UUID steve = UUID.randomUUID();
     a.login(steve, "Steve");
-    store.setDown(true);
-    store.wipe(); // the store came back empty...
-    store.setDown(false);
-    // ...and b got the player in before a noticed
-    store.claim(new PlayerRecord(steve, "Steve", "b", 5, null, "192.0.2.4", 0), Long.MAX_VALUE,
-        5_000).join();
-    await(() -> a.players.isEmpty());
-    assertEquals(Optional.of("b"), owner(steve));
+    store.wipe(); // the store came back empty and the player logs in on b at once
+    assertNull(b.login(steve, "Steve").denyReason());
+    // Whichever order the resync and the login ran in, exactly one copy stays and owns it.
+    await(() -> a.players.containsKey(steve) != b.players.containsKey(steve)
+        && owner(steve).equals(Optional.of(a.players.containsKey(steve) ? "a" : "b")));
+    Thread.sleep(1_000); // and it stays that way
+    assertTrue(a.players.containsKey(steve) != b.players.containsKey(steve));
+    assertEquals(Optional.of(a.players.containsKey(steve) ? "a" : "b"), owner(steve));
   }
 
   @Test

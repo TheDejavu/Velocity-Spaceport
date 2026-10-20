@@ -39,9 +39,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * {@link NetworkStore} on Redis (standalone or Sentinel) through Lettuce. Lettuce runs on its own
@@ -141,18 +146,24 @@ public final class RedisStore implements NetworkStore {
   private static final RedisCodec<String, byte[]> CODEC =
       RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE);
 
+  private static final Logger logger = LogManager.getLogger(RedisStore.class);
+
   private final String prefix;
   private final String net;
   private final ClientResources resources;
   private final RedisClient client;
-  private final StatefulRedisConnection<String, String> connection;
-  private final RedisAsyncCommands<String, String> redis;
-  private final StatefulRedisConnection<String, byte[]> publisher;
-  private final StatefulRedisPubSubConnection<String, byte[]> subscriber;
   private final Map<String, Consumer<byte[]>> handlers = new ConcurrentHashMap<>();
+  private volatile @Nullable Connections connections;
+  private volatile boolean closed;
+
+  private record Connections(StatefulRedisConnection<String, String> commands,
+                             StatefulRedisConnection<String, byte[]> publisher,
+                             StatefulRedisPubSubConnection<String, byte[]> subscriber) {
+  }
 
   /**
-   * Connects to Redis.
+   * Connects to Redis. If Redis is unreachable the store starts anyway and keeps trying in the
+   * background; until then every call fails.
    *
    * @param uri a redis:// or redis-sentinel:// URI
    * @param prefix prefix for every key and channel
@@ -175,19 +186,51 @@ public final class RedisStore implements NetworkStore {
     client.setOptions(ClientOptions.builder()
         .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
         .build());
-    this.connection = client.connect();
-    this.redis = connection.async();
-    this.publisher = client.connect(CODEC);
-    this.subscriber = client.connectPubSub(CODEC);
-    subscriber.addListener(new RedisPubSubAdapter<>() {
-      @Override
-      public void message(String channel, byte[] message) {
-        Consumer<byte[]> handler = handlers.get(channel);
-        if (handler != null) {
-          handler.accept(message);
+    if (!connect()) {
+      // Lettuce only reconnects connections it once had; keep trying the first one ourselves.
+      Thread.ofPlatform().daemon().name("Spaceport Redis Connect").start(() -> {
+        while (!closed && !connect()) {
+          try {
+            Thread.sleep(1000);
+          } catch (InterruptedException e) {
+            return;
+          }
         }
+      });
+    }
+  }
+
+  private boolean connect() {
+    try {
+      StatefulRedisPubSubConnection<String, byte[]> subscriber = client.connectPubSub(CODEC);
+      subscriber.addListener(new RedisPubSubAdapter<>() {
+        @Override
+        public void message(String channel, byte[] message) {
+          Consumer<byte[]> handler = handlers.get(channel);
+          if (handler != null) {
+            handler.accept(message);
+          }
+        }
+      });
+      Connections c = new Connections(client.connect(), client.connect(CODEC), subscriber);
+      if (!handlers.isEmpty()) {
+        subscriber.sync().subscribe(handlers.keySet().toArray(String[]::new));
       }
-    });
+      connections = c;
+      return true;
+    } catch (RuntimeException e) {
+      logger.warn("Cannot connect to Redis yet: {}", e.getMessage());
+      return false;
+    }
+  }
+
+  private <T> CompletableFuture<T> call(
+      Function<RedisAsyncCommands<String, String>, CompletionStage<T>> op) {
+    Connections c = connections;
+    if (c == null) {
+      return CompletableFuture.failedFuture(new IllegalStateException("not connected to Redis"));
+    }
+    return op.apply(c.commands().async()).toCompletableFuture();
   }
 
   private String playerKey(UUID player) {
@@ -201,11 +244,10 @@ public final class RedisStore implements NetworkStore {
   @Override
   public CompletableFuture<Tick> tick(String proxyId, int players, long ttlMillis,
       String candidateGeneration) {
-    return redis.<List<Object>>eval(TICK, ScriptOutputType.MULTI,
+    return call(redis -> redis.<List<Object>>eval(TICK, ScriptOutputType.MULTI,
             new String[] {net + "proxies", net + "gen", net + "proxy:" + proxyId},
             proxyId, Integer.toString(players), Long.toString(ttlMillis), candidateGeneration,
-            net + "proxy:")
-        .toCompletableFuture()
+            net + "proxy:"))
         .thenApply(r -> {
           List<ProxyState> proxies = new ArrayList<>();
           for (int i = 3; i + 2 < r.size(); i += 3) {
@@ -218,12 +260,11 @@ public final class RedisStore implements NetworkStore {
 
   @Override
   public CompletableFuture<Claim> claim(PlayerRecord p, long epoch, long deadAfterMillis) {
-    return redis.<List<Object>>eval(CLAIM, ScriptOutputType.MULTI,
+    return call(redis -> redis.<List<Object>>eval(CLAIM, ScriptOutputType.MULTI,
             new String[] {playerKey(p.uuid()), nameKey(p.name()), net + "members:" + p.proxy()},
             p.proxy(), Long.toString(epoch), Long.toString(p.session()), p.name(),
             p.server() == null ? "" : p.server(), p.ip(), Long.toString(p.since()),
-            Long.toString(deadAfterMillis), net + "proxy:", net + "members:", p.uuid().toString())
-        .toCompletableFuture()
+            Long.toString(deadAfterMillis), net + "proxy:", net + "members:", p.uuid().toString()))
         .thenApply(r -> {
           String owner = (String) r.get(1);
           return new Claim((Long) r.get(0) == 1, owner.isEmpty() ? null : owner);
@@ -233,34 +274,33 @@ public final class RedisStore implements NetworkStore {
   @Override
   public CompletableFuture<Boolean> updateServer(UUID player, String proxyId, long session,
       String server) {
-    return redis.<Long>eval(UPDATE, ScriptOutputType.INTEGER, new String[] {playerKey(player)},
-            proxyId, Long.toString(session), server)
-        .toCompletableFuture().thenApply(n -> n == 1);
+    return call(redis -> redis.<Long>eval(UPDATE, ScriptOutputType.INTEGER,
+            new String[] {playerKey(player)}, proxyId, Long.toString(session), server))
+        .thenApply(n -> n == 1);
   }
 
   @Override
   public CompletableFuture<Boolean> release(UUID player, String proxyId, long session) {
-    return redis.<String>hget(playerKey(player), "name").toCompletableFuture()
-        .thenCompose(name -> redis.<Long>eval(RELEASE, ScriptOutputType.INTEGER,
-                new String[] {playerKey(player), name == null ? prefix + "name:" : nameKey(name),
-                    net + "members:" + proxyId},
-                proxyId, Long.toString(session), player.toString())
-            .toCompletableFuture())
+    return call(redis -> redis.hget(playerKey(player), "name"))
+        .thenCompose(name -> call(redis -> redis.<Long>eval(RELEASE, ScriptOutputType.INTEGER,
+            new String[] {playerKey(player), name == null ? prefix + "name:" : nameKey(name),
+                net + "members:" + proxyId},
+            proxyId, Long.toString(session), player.toString())))
         .thenApply(n -> n == 1);
   }
 
   @Override
   public CompletableFuture<Integer> sweep(String proxyId, long deadAfterMillis, boolean force) {
-    return redis.<Long>eval(SWEEP, ScriptOutputType.INTEGER,
+    return call(redis -> redis.<Long>eval(SWEEP, ScriptOutputType.INTEGER,
             new String[] {net + "members:" + proxyId, net + "proxies", net + "proxy:" + proxyId},
             proxyId, Long.toString(deadAfterMillis), force ? "1" : "0", prefix + "player:",
-            prefix + "name:")
-        .toCompletableFuture().thenApply(Long::intValue);
+            prefix + "name:"))
+        .thenApply(Long::intValue);
   }
 
   @Override
   public CompletableFuture<Optional<PlayerRecord>> player(UUID player) {
-    return redis.hgetall(playerKey(player)).toCompletableFuture().thenApply(h -> {
+    return call(redis -> redis.hgetall(playerKey(player))).thenApply(h -> {
       if (h == null || h.get("proxy") == null) {
         return Optional.empty();
       }
@@ -273,32 +313,48 @@ public final class RedisStore implements NetworkStore {
 
   @Override
   public CompletableFuture<Optional<UUID>> uuidOf(String name) {
-    return redis.get(nameKey(name)).toCompletableFuture()
+    return call(redis -> redis.get(nameKey(name)))
         .thenApply(s -> Optional.ofNullable(s).map(UUID::fromString));
   }
 
   @Override
   public CompletableFuture<Long> nextEpoch() {
-    return redis.incr(net + "epoch").toCompletableFuture();
+    return call(redis -> redis.incr(net + "epoch"));
   }
 
   @Override
   public CompletableFuture<Void> publish(String channel, byte[] payload) {
-    return publisher.async().publish(prefix + channel, payload)
+    Connections c = connections;
+    if (c == null) {
+      return CompletableFuture.failedFuture(new IllegalStateException("not connected to Redis"));
+    }
+    return c.publisher().async().publish(prefix + channel, payload)
         .toCompletableFuture().thenApply(n -> null);
   }
 
+  /**
+   * Subscribes to a channel. Before the first connection the subscription is only recorded and
+   * made when Redis is reached; Lettuce renews subscriptions after reconnects itself.
+   */
   @Override
   public CompletableFuture<Void> subscribe(String channel, Consumer<byte[]> handler) {
     handlers.put(prefix + channel, handler);
-    return subscriber.async().subscribe(prefix + channel).toCompletableFuture();
+    Connections c = connections;
+    if (c == null) {
+      return CompletableFuture.completedFuture(null);
+    }
+    return c.subscriber().async().subscribe(prefix + channel).toCompletableFuture();
   }
 
   @Override
   public void close() {
-    subscriber.close();
-    publisher.close();
-    connection.close();
+    closed = true;
+    Connections c = connections;
+    if (c != null) {
+      c.subscriber().close();
+      c.publisher().close();
+      c.commands().close();
+    }
     client.shutdown();
     resources.shutdown();
   }
