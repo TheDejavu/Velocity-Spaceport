@@ -268,11 +268,9 @@ public record RouteTicket(UUID uuid, String name, String server, String ip, long
      */
     public static Keys load(Path file) throws IOException {
       if (!Files.exists(file)) {
-        byte[] key = new byte[32];
-        RANDOM.nextBytes(key);
-        Files.writeString(file, "k1=" + Base64.getEncoder().encodeToString(key) + "\n",
-            StandardCharsets.UTF_8);
+        create(file);
       }
+      checkPrivate(file);
       Map<String, byte[]> keys = new LinkedHashMap<>();
       List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
       for (String line : lines) {
