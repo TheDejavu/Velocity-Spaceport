@@ -86,10 +86,12 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -101,6 +103,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -417,6 +420,21 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
               translationRegistry.registerAll(locale, file, false);
               ClosestLocaleMatcher.INSTANCE.registerKnown(locale);
             });
+          }
+
+          // Spaceport: a lang folder written by an older version lacks newer keys; take those
+          // from the bundled English file instead of showing the raw key.
+          final Path bundled = path.resolve("messages.properties");
+          if (Files.exists(bundled)) {
+            final Properties english = new Properties();
+            try (InputStream in = Files.newInputStream(bundled)) {
+              english.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+            }
+            for (String key : english.stringPropertyNames()) {
+              if (!translationRegistry.contains(key)) {
+                translationRegistry.register(key, Locale.US, english.getProperty(key));
+              }
+            }
           }
 
         } catch (IOException e) {
