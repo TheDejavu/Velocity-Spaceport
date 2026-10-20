@@ -27,7 +27,8 @@ tasks {
             attributes["Add-Opens"] = "java.base/java.nio"
             // Spaceport: Lettuce reads its version from its package; in the fat jar that would be
             // Velocity's, which has spaces and makes RedisURI throw
-            attributes(mapOf("Implementation-Version" to libs.lettuce.get().version), "io/lettuce/core/")
+            attributes(mapOf("Implementation-Version" to libs.lettuce.get().version),
+                "com/velocitypowered/proxy/redis/lettuce/core/")
         }
     }
 
@@ -42,6 +43,11 @@ tasks {
         exclude("org/checkerframework/checker/**")
 
         relocate("org.bstats", "com.velocitypowered.proxy.bstats")
+        // Plugin class loaders ask the proxy first: keep our Redis client out of their way
+        relocate("io.lettuce", "com.velocitypowered.proxy.redis.lettuce")
+        relocate("reactor", "com.velocitypowered.proxy.redis.reactor")
+        relocate("org.reactivestreams", "com.velocitypowered.proxy.redis.reactivestreams")
+        relocate("redis.clients.authentication", "com.velocitypowered.proxy.redis.authx")
 
         // Include Configurate 3
         val configurateBuildTask = project(":deprecated-configurate3").tasks.named("shadowJar")
