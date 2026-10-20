@@ -54,6 +54,7 @@ import com.velocitypowered.proxy.console.VelocityConsole;
 import com.velocitypowered.proxy.crypto.EncryptionUtils;
 import com.velocitypowered.proxy.event.VelocityEventManager;
 import com.velocitypowered.proxy.network.ConnectionManager;
+import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.plugin.VelocityPluginManager;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginContainer;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginDescription;
@@ -168,6 +169,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private final Object sessionIdLock = new Object();
   private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
+  private @Nullable ClusterService cluster;
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
@@ -307,6 +309,9 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     ipAttemptLimiter = Ratelimiters.createWithMilliseconds(configuration.getLoginRatelimit());
     commandRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getCommandRatelimit());
     tabCompleteRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getTabCompleteRatelimit());
+    if (configuration.getNetworkConfig().enabled()) {
+      cluster = new ClusterService(configuration.getNetworkConfig(), configuration.getBind());
+    }
     loadPlugins();
 
     // Go ahead and fire the proxy initialization event. We block since plugins should have a chance
@@ -647,6 +652,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         }
 
         eventManager.fire(new ProxyShutdownEvent()).join();
+
+        if (cluster != null) {
+          cluster.close();
+        }
 
         timedOut = !scheduler.shutdown() || timedOut;
 

@@ -41,6 +41,8 @@ guava = "com.google.guava:guava:33.7.2-jre"
 gson = "com.google.code.gson:gson:2.14.0"
 guice = "com.google.inject:guice:7.0.0"
 lmbda = "org.lanternpowered:lmbda:3.0.0"
+lettuce = "io.lettuce:lettuce-core:7.9.0.RELEASE"
+jedis = "redis.clients:jedis:8.0.2"
 log4j-api = { module = "org.apache.logging.log4j:log4j-api", version.ref = "log4j" }
 log4j-core = { module = "org.apache.logging.log4j:log4j-core", version.ref = "log4j" }
 log4j-slf4j-impl = { module = "org.apache.logging.log4j:log4j-slf4j2-impl", version.ref = "log4j" }

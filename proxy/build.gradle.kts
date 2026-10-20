@@ -25,6 +25,9 @@ tasks {
             attributes["Multi-Release"] = "true"
             // Spaceport: lets Netty create direct buffers without JDK cleaners (see Velocity.java)
             attributes["Add-Opens"] = "java.base/java.nio"
+            // Spaceport: Lettuce reads its version from its package; in the fat jar that would be
+            // Velocity's, which has spaces and makes RedisURI throw
+            attributes(mapOf("Implementation-Version" to libs.lettuce.get().version), "io/lettuce/core/")
         }
     }
 
@@ -119,6 +122,8 @@ dependencies {
     implementation(libs.nightconfig)
     implementation(libs.bstats)
     implementation(libs.lmbda)
+    implementation(libs.lettuce)
+    testImplementation(libs.jedis)
     implementation(libs.asm)
     implementation(libs.bundles.flare)
     compileOnly(libs.spotbugs.annotations)

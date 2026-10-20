@@ -199,3 +199,18 @@ map = "Velocity"
 
 # Whether plugins should be shown in query response by default or not
 show-plugins = false
+
+[network]
+# Spaceport: run several proxies as one network (shared player list, no duplicate logins).
+# Off by default; a single proxy needs nothing here.
+enabled = false
+
+# This proxy's id in the network, "auto" uses hostname-port.
+proxy-id = "auto"
+
+# Redis holding the network state: redis://[password@]host:port/db or
+# redis-sentinel://[password@]host1:port1,host2:port2/db#primary-name
+redis-uri = "redis://127.0.0.1:6379/0"
+
+# Prefix for every Redis key and channel, so several networks can share one Redis.
+key-prefix = "sp:"

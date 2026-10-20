@@ -99,6 +99,7 @@ public class VelocityConfiguration implements ProxyConfig {
   private boolean forceKeyAuthentication = true; // Added in 1.19
   @Expose
   private PacketLimiterConfig packetLimiterConfig = PacketLimiterConfig.DEFAULT;
+  private NetworkConfig networkConfig = NetworkConfig.DEFAULT;
 
   private VelocityConfiguration(Servers servers, ForcedHosts forcedHosts, Advanced advanced,
       Query query, Metrics metrics) {
@@ -115,7 +116,8 @@ public class VelocityConfiguration implements ProxyConfig {
       boolean onlineModeKickExistingPlayers, PingPassthroughMode pingPassthrough,
       boolean samplePlayersInPing, boolean enablePlayerAddressLogging, Servers servers,
       ForcedHosts forcedHosts, Advanced advanced, Query query, Metrics metrics,
-      boolean forceKeyAuthentication, PacketLimiterConfig packetLimiterConfig) {
+      boolean forceKeyAuthentication, PacketLimiterConfig packetLimiterConfig,
+      NetworkConfig networkConfig) {
     this.bind = bind;
     this.motd = motd;
     this.showMaxPlayers = showMaxPlayers;
@@ -135,6 +137,7 @@ public class VelocityConfiguration implements ProxyConfig {
     this.metrics = metrics;
     this.forceKeyAuthentication = forceKeyAuthentication;
     this.packetLimiterConfig = packetLimiterConfig;
+    this.networkConfig = networkConfig;
   }
 
   /**
@@ -453,6 +456,10 @@ public class VelocityConfiguration implements ProxyConfig {
     return advanced.isEnableReusePort();
   }
 
+  public NetworkConfig getNetworkConfig() {
+    return networkConfig;
+  }
+
   public PacketLimiterConfig getPacketLimiterConfig() {
     return packetLimiterConfig;
   }
@@ -600,7 +607,8 @@ public class VelocityConfiguration implements ProxyConfig {
               new Query(queryConfig),
               new Metrics(metricsConfig),
               forceKeyAuthentication,
-              packetLimiterConfig
+              packetLimiterConfig,
+              NetworkConfig.fromConfig(config.get("network"))
       );
     }
   }
@@ -1032,6 +1040,36 @@ public class VelocityConfiguration implements ProxyConfig {
       } else {
         return DEFAULT;
       }
+    }
+  }
+
+  /**
+   * Configuration for running several proxies as one network.
+   *
+   * @param enabled   whether this proxy joins a network
+   * @param proxyId   this proxy's id, "auto" for hostname-port
+   * @param redisUri  redis:// or redis-sentinel:// URI
+   * @param keyPrefix prefix for every Redis key and channel
+   */
+  public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix) {
+    public static final NetworkConfig DEFAULT =
+        new NetworkConfig(false, "auto", "redis://127.0.0.1:6379/0", "sp:");
+
+    /**
+     * Reads the [network] section.
+     *
+     * @param config the section, may be null
+     * @return the network config, or the default if {@code config} is null
+     */
+    public static NetworkConfig fromConfig(CommentedConfig config) {
+      if (config == null) {
+        return DEFAULT;
+      }
+      return new NetworkConfig(
+          config.getOrElse("enabled", DEFAULT.enabled()),
+          config.getOrElse("proxy-id", DEFAULT.proxyId()),
+          config.getOrElse("redis-uri", DEFAULT.redisUri()),
+          config.getOrElse("key-prefix", DEFAULT.keyPrefix()));
     }
   }
 }
