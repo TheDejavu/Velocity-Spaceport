@@ -75,6 +75,7 @@ import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.title.GenericTitlePacket;
 import com.velocitypowered.proxy.protocol.util.PluginMessageUtil;
 import com.velocitypowered.proxy.util.CharacterUtil;
+import com.velocitypowered.proxy.util.VelocityProperties;
 import com.velocitypowered.proxy.util.except.QuietRuntimeException;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -115,6 +116,9 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       Integer.getInteger("velocity.max-queued-login-plugin-messages", 1024);
 
   private static final Logger logger = LogManager.getLogger(ClientPlaySessionHandler.class);
+  // Spaceport: forward passthrough packets without a flush each and flush once per read batch.
+  private static final boolean BATCH_SERVERBOUND_FLUSH =
+      VelocityProperties.readBoolean("spaceport.serverbound-flush-batching", true);
 
   private final ConnectedPlayer player;
   private boolean spawned = false;
@@ -132,6 +136,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   private CompletableFuture<Void> configSwitchFuture;
 
   private int failedTabCompleteAttempts;
+  private @Nullable MinecraftConnection pendingFlush;
 
   /**
    * Constructs a client play session handler.
@@ -190,6 +195,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void deactivated() {
+    readCompleted(); // don't strand batched packets when the handler is swapped mid-read
     player.discardChatQueue();
     PluginMessagePacket message;
     while ((message = loginPluginMessages.poll()) != null) {
@@ -537,7 +543,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       if (packet instanceof PluginMessagePacket) {
         ((PluginMessagePacket) packet).retain();
       }
-      smc.write(packet);
+      forward(smc, packet);
     }
   }
 
@@ -555,7 +561,29 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         && serverConnection.getPhase().consideredComplete()
         && smc.getState() == StateRegistry.PLAY;
     if (stateAllowsForward) {
-      smc.write(buf.retain());
+      forward(smc, buf.retain());
+    }
+  }
+
+  private void forward(MinecraftConnection smc, Object msg) {
+    if (!BATCH_SERVERBOUND_FLUSH) {
+      smc.write(msg);
+      return;
+    }
+    smc.delayedWrite(msg);
+    if (pendingFlush != smc) {
+      if (pendingFlush != null) {
+        pendingFlush.flush();
+      }
+      pendingFlush = smc;
+    }
+  }
+
+  @Override
+  public void readCompleted() {
+    if (pendingFlush != null) {
+      pendingFlush.flush();
+      pendingFlush = null;
     }
   }
 
