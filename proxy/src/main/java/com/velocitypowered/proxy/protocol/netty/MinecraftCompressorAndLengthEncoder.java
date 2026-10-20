@@ -57,6 +57,10 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
   @Override
   public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
       throws Exception {
+    if (msg instanceof PrecompressedFrame frame) {
+      writePrecompressed(ctx, frame, promise);
+      return;
+    }
     if (coalescer == null || !(msg instanceof ByteBuf buf)) {
       if (coalescer != null) {
         coalescer.writeBatch(ctx); // keep order with whatever passes us by
@@ -76,6 +80,28 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
       ReferenceCountUtil.release(buf);
     }
     coalescer.added(ctx, promise);
+  }
+
+  private void writePrecompressed(ChannelHandlerContext ctx, PrecompressedFrame frame,
+      ChannelPromise promise) {
+    try {
+      ByteBuf data = frame.content();
+      int length = data.readableBytes();
+      if (coalescer != null) {
+        ByteBuf out = coalescer.batch(ctx, length + 3);
+        ProtocolUtils.writeVarInt(out, length);
+        WriteCoalescer.append(data, out);
+        coalescer.added(ctx, promise);
+      } else {
+        ByteBuf out = IS_JAVA_CIPHER ? ctx.alloc().heapBuffer(length + 3)
+            : ctx.alloc().directBuffer(length + 3);
+        ProtocolUtils.writeVarInt(out, length);
+        out.writeBytes(data, data.readerIndex(), length);
+        ctx.write(out, promise);
+      }
+    } finally {
+      frame.release();
+    }
   }
 
   @Override
@@ -151,6 +177,10 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
       }
     }
     compressor.close();
+  }
+
+  public int getThreshold() {
+    return threshold;
   }
 
   public void setThreshold(int threshold) {

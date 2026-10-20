@@ -35,6 +35,15 @@ public class AutoReadHolderHandler extends ChannelDuplexHandler {
     this.queuedMessages = new ArrayDeque<>();
   }
 
+  /**
+   * Returns whether messages are being held back.
+   *
+   * @return true if messages are queued
+   */
+  public boolean hasQueued() {
+    return !queuedMessages.isEmpty();
+  }
+
   @Override
   public void read(ChannelHandlerContext ctx) throws Exception {
     drainQueuedMessages(ctx);

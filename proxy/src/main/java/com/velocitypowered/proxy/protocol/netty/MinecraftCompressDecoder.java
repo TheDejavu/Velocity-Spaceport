@@ -130,6 +130,10 @@ public class MinecraftCompressDecoder extends MessageToMessageDecoder<ByteBuf> {
     compressor.close();
   }
 
+  public int getThreshold() {
+    return threshold;
+  }
+
   public void setThreshold(int threshold) {
     this.threshold = threshold;
   }

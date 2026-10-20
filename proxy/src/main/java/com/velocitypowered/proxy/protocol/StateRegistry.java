@@ -1082,6 +1082,16 @@ public enum StateRegistry {
       }
 
       /**
+       * Returns whether a packet is registered for {@code id}.
+       *
+       * @param id the packet ID
+       * @return true if {@link #createPacket(int)} would return a packet
+       */
+      public boolean hasPacket(final int id) {
+        return this.packetIdToSupplier.containsKey(id);
+      }
+
+      /**
        * Attempts to look up the packet ID for an {@code packet}.
        *
        * @param packet the packet to look up

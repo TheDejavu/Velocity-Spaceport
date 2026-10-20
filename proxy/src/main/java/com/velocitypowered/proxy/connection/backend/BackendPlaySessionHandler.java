@@ -48,6 +48,7 @@ import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftVarintFrameDecoder;
+import com.velocitypowered.proxy.protocol.netty.PassthroughHandler;
 import com.velocitypowered.proxy.protocol.packet.AvailableCommandsPacket;
 import com.velocitypowered.proxy.protocol.packet.BossBarPacket;
 import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
@@ -124,6 +125,7 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
     serverConn.getServer().addPlayer(serverConn.getPlayer());
 
     MinecraftConnection serverMc = serverConn.ensureConnected();
+    PassthroughHandler.install(serverMc, playerConnection);
     if (server.getConfiguration().isBungeePluginChannelEnabled()) {
       serverMc.write(PluginMessageUtil.constructChannelsPacket(serverMc.getProtocolVersion(),
           ImmutableList.of(getBungeeCordChannel(serverMc.getProtocolVersion()))
@@ -477,6 +479,19 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   public void handleUnknown(ByteBuf buf) {
     boolean huge = buf.readableBytes() > LARGE_PACKET_THRESHOLD;
     playerConnection.delayedWrite(buf.retain());
+    if (huge || ++packetsFlushed >= MAXIMUM_PACKETS_TO_FLUSH) {
+      playerConnection.flush();
+      packetsFlushed = 0;
+    }
+  }
+
+  /**
+   * Spaceport: accounts a packet the passthrough fast path wrote to the player, flushing like
+   * {@link #handleUnknown(ByteBuf)} does.
+   *
+   * @param huge whether the packet was large enough to flush at once
+   */
+  public void passthroughWritten(boolean huge) {
     if (huge || ++packetsFlushed >= MAXIMUM_PACKETS_TO_FLUSH) {
       playerConnection.flush();
       packetsFlushed = 0;

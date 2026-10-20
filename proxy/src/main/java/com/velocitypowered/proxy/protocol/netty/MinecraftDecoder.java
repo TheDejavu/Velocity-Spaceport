@@ -148,6 +148,16 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
         + " ID 0x" + Integer.toHexString(packetId);
   }
 
+  /**
+   * Returns whether a packet id is decoded and handled by Velocity in the current state.
+   *
+   * @param packetId the packet id
+   * @return true if Velocity decodes this packet
+   */
+  public boolean isRegistered(int packetId) {
+    return registry.hasPacket(packetId);
+  }
+
   public void setProtocolVersion(ProtocolVersion protocolVersion) {
     this.registry = state.getProtocolRegistry(direction, protocolVersion);
   }
