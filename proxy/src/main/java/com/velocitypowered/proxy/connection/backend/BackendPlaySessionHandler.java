@@ -72,6 +72,7 @@ import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
 import com.velocitypowered.proxy.protocol.packet.config.StartUpdatePacket;
 import com.velocitypowered.proxy.protocol.util.DeferredByteBufHolder;
 import com.velocitypowered.proxy.protocol.util.PluginMessageUtil;
+import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
@@ -95,6 +96,8 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   private static final int MAXIMUM_PACKETS_TO_FLUSH =
       Integer.getInteger("velocity.max-packets-per-flush", 8192);
   private static final int LARGE_PACKET_THRESHOLD = 1024 * 128;
+  private static final boolean FAILOVER_ON_TIMEOUT =
+      VelocityProperties.readBoolean("spaceport.failover-on-backend-timeout", true);
 
   private final VelocityServer server;
   private final VelocityServerConnection serverConn;
@@ -507,8 +510,11 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   @Override
   public void exception(Throwable throwable) {
     exceptionTriggered = true;
-    serverConn.getPlayer().handleConnectionException(serverConn.getServer(), throwable,
-        !(throwable instanceof ReadTimeoutException));
+    // Upstream treats a backend read timeout as unsafe because the client has usually timed out
+    // as well; Spaceport times backends out earlier, so fail over while the client is still there.
+    boolean safe = !(throwable instanceof ReadTimeoutException)
+        || (FAILOVER_ON_TIMEOUT && playerConnection.readRecently(10_000));
+    serverConn.getPlayer().handleConnectionException(serverConn.getServer(), throwable, safe);
   }
 
   public VelocityServer getServer() {

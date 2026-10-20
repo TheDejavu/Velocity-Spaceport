@@ -100,6 +100,7 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
   public final VelocityServer server;
   private ConnectionType connectionType = ConnectionTypes.UNDETERMINED;
   private boolean knownDisconnect = false;
+  private volatile long lastReadNanos = System.nanoTime();
 
   /**
    * Initializes a new {@link MinecraftConnection} instance with no session ID.
@@ -186,6 +187,7 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
 
   @Override
   public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
+    lastReadNanos = System.nanoTime();
     if (activeSessionHandler != null) {
       activeSessionHandler.readCompleted();
     }
@@ -339,6 +341,17 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
 
   public @Nullable UUID getSessionId() {
     return sessionId;
+  }
+
+  /**
+   * Returns whether data arrived on this connection within the given time.
+   *
+   * @param millis the time window
+   * @return true if the peer sent something recently
+   */
+  public boolean readRecently(long millis) {
+    return channel.isActive()
+        && System.nanoTime() - lastReadNanos < TimeUnit.MILLISECONDS.toNanos(millis);
   }
 
   public boolean isClosed() {

@@ -48,12 +48,24 @@ public class BackendChannelInitializer extends ChannelInitializer<Channel> {
     this.server = server;
   }
 
+  /**
+   * Spaceport: a hung backend must be noticed before the client gives up on its own 30 s
+   * timeout, or the player is disconnected instead of being moved to a fallback server.
+   *
+   * @param configured the configured read timeout
+   * @return the read timeout for backend connections, in milliseconds
+   */
+  public static int backendReadTimeout(int configured) {
+    int cap = Integer.getInteger("spaceport.backend-read-timeout", 20_000);
+    return cap > 0 ? Math.min(configured, cap) : configured;
+  }
+
   @Override
   protected void initChannel(Channel ch) {
     ch.pipeline()
         .addLast(FRAME_DECODER, new MinecraftVarintFrameDecoder(ProtocolUtils.Direction.CLIENTBOUND))
         .addLast(READ_TIMEOUT,
-            new ReadTimeoutHandler(server.getConfiguration().getReadTimeout(),
+            new ReadTimeoutHandler(backendReadTimeout(server.getConfiguration().getReadTimeout()),
                 TimeUnit.MILLISECONDS))
         .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.create())
         .addLast(MINECRAFT_DECODER,
