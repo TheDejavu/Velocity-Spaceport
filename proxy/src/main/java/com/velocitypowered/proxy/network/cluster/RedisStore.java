@@ -66,7 +66,7 @@ public final class RedisStore implements NetworkStore {
       + "local now = t[1] * 1000 + math.floor(t[2] / 1000)\n";
 
   // KEYS: proxies set, gen, own proxy hash. ARGV: id, players, ttl, candidate gen, proxy prefix,
-  // servers (comma separated), instance.
+  // servers (comma separated), instance, draining (1 or 0).
   private static final String TICK = NOW + """
       local created = 0
       local g = redis.call('GET', KEYS[2])
@@ -74,26 +74,28 @@ public final class RedisStore implements NetworkStore {
       local existed = redis.call('EXISTS', KEYS[3])
       local previous = redis.call('HGET', KEYS[3], 'instance') or ''
       redis.call('HSET', KEYS[3], 'players', ARGV[2], 'seen', now, 'servers', ARGV[6],
-          'instance', ARGV[7])
+          'instance', ARGV[7], 'draining', ARGV[8])
       redis.call('PEXPIRE', KEYS[3], ARGV[3])
       redis.call('SADD', KEYS[1], ARGV[1])
       local out = {g, created, existed, previous}
       for _, id in ipairs(redis.call('SMEMBERS', KEYS[1])) do
-        local v = redis.call('HMGET', ARGV[5] .. id, 'players', 'seen', 'servers', 'instance')
+        local v = redis.call('HMGET', ARGV[5] .. id, 'players', 'seen', 'servers', 'instance',
+            'draining')
         out[#out + 1] = id
         out[#out + 1] = v[1] or '-1'
         out[#out + 1] = v[2] and tostring(now - tonumber(v[2])) or '-1'
         out[#out + 1] = v[3] or ''
         out[#out + 1] = v[4] or ''
+        out[#out + 1] = v[5] or '0'
       end
       return out
       """;
 
   // KEYS: proxy hash. Returns {players, age, servers, instance} or an empty list.
   private static final String PROXY = NOW + """
-      local v = redis.call('HMGET', KEYS[1], 'players', 'seen', 'servers', 'instance')
+      local v = redis.call('HMGET', KEYS[1], 'players', 'seen', 'servers', 'instance', 'draining')
       if not v[2] then return {} end
-      return {v[1], tostring(now - tonumber(v[2])), v[3] or '', v[4] or ''}
+      return {v[1], tostring(now - tonumber(v[2])), v[3] or '', v[4] or '', v[5] or '0'}
       """;
 
   // KEYS: player hash, name key, own members set. ARGV: proxy, epoch, session, name, server, ip,
@@ -256,17 +258,17 @@ public final class RedisStore implements NetworkStore {
 
   @Override
   public CompletableFuture<Tick> tick(String proxyId, int players, Collection<String> servers,
-      String instance, long ttlMillis, String candidateGeneration) {
+      String instance, boolean draining, long ttlMillis, String candidateGeneration) {
     return call(redis -> redis.<List<Object>>eval(TICK, ScriptOutputType.MULTI,
             new String[] {net + "proxies", net + "gen", net + "proxy:" + proxyId},
             proxyId, Integer.toString(players), Long.toString(ttlMillis), candidateGeneration,
-            net + "proxy:", String.join(",", servers), instance))
+            net + "proxy:", String.join(",", servers), instance, draining ? "1" : "0"))
         .thenApply(r -> {
           List<ProxyState> proxies = new ArrayList<>();
-          for (int i = 4; i + 4 < r.size(); i += 5) {
+          for (int i = 4; i + 5 < r.size(); i += 6) {
             proxies.add(new ProxyState((String) r.get(i), Integer.parseInt((String) r.get(i + 1)),
                 Long.parseLong((String) r.get(i + 2)), servers((String) r.get(i + 3)),
-                (String) r.get(i + 4)));
+                (String) r.get(i + 4), "1".equals(r.get(i + 5))));
           }
           return new Tick((String) r.get(0), (Long) r.get(1) == 1, (Long) r.get(2) == 1,
               (String) r.get(3), proxies);
@@ -283,7 +285,7 @@ public final class RedisStore implements NetworkStore {
             new String[] {net + "proxy:" + proxyId}))
         .thenApply(r -> r.isEmpty() ? Optional.empty() : Optional.of(new ProxyState(proxyId,
             Integer.parseInt((String) r.get(0)), Long.parseLong((String) r.get(1)),
-            servers((String) r.get(2)), (String) r.get(3))));
+            servers((String) r.get(2)), (String) r.get(3), "1".equals(r.get(4)))));
   }
 
   @Override

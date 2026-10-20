@@ -63,6 +63,7 @@ import com.velocitypowered.proxy.network.cluster.NetworkActions;
 import com.velocitypowered.proxy.network.cluster.NetworkStore;
 import com.velocitypowered.proxy.network.cluster.RedisStore;
 import com.velocitypowered.proxy.network.cluster.VelocityNetwork;
+import com.velocitypowered.proxy.network.health.ProxyHealth;
 import com.velocitypowered.proxy.plugin.VelocityPluginManager;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginContainer;
 import com.velocitypowered.proxy.plugin.loader.VelocityPluginDescription;
@@ -181,6 +182,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
   private @Nullable ClusterService cluster;
+  private final ProxyHealth health = new ProxyHealth(this);
   private VelocityNetwork network = new VelocityNetwork(this, null, null);
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
@@ -324,6 +326,16 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     if (configuration.getNetworkConfig().enabled()) {
       startNetwork(configuration.getNetworkConfig());
     }
+    try {
+      health.start();
+    } catch (IOException e) {
+      logger.error("Could not open the health listener on {}",
+          configuration.getNetworkConfig().healthBind(), e);
+    }
+    if (configuration.getNetworkConfig().enabled()
+        || !configuration.getNetworkConfig().healthBind().isEmpty()) {
+      NetworkCommands.registerSpaceport(this);
+    }
     loadPlugins();
 
     // Go ahead and fire the proxy initialization event. We block since plugins should have a chance
@@ -358,6 +370,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     } else {
       logger.warn("debug environment, metrics is disabled!");
     }
+    health.markStarted();
   }
 
   private void registerTranslations() {
@@ -620,6 +633,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     Runnable shutdownProcess = () -> {
       logger.info("Shutting down the proxy...");
 
+      // Spaceport: tell the load balancer first (not ready, then marked draining), while the
+      // listener is still open for players a stale balancer decision still sends here.
+      health.drainForShutdown();
+
       // Stop accepting new connections, but keep DNS available to pre-shutdown handlers.
       cm.closeEndpoints(true);
 
@@ -668,6 +685,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         if (cluster != null) {
           cluster.close();
         }
+        health.close();
 
         timedOut = !scheduler.shutdown() || timedOut;
 
@@ -779,6 +797,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
       connectionsByName.put(lowerName, connection);
       connectionsByUuid.put(connection.getUniqueId(), connection);
     }
+    health.loginCompleted();
     return true;
   }
 
@@ -866,6 +885,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   @Override
   public VelocityNetwork getNetwork() {
     return network;
+  }
+
+  public ProxyHealth getHealth() {
+    return health;
   }
 
   public @Nullable ClusterService getCluster() {

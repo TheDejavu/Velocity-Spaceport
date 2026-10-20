@@ -39,7 +39,7 @@ import java.util.function.LongSupplier;
 public final class LocalStore implements NetworkStore {
 
   private record ProxyEntry(int players, long seen, long expires, List<String> servers,
-                            String instance) {
+                            String instance, boolean draining) {
   }
 
   private record Owned(PlayerRecord record, long epoch) {
@@ -98,7 +98,7 @@ public final class LocalStore implements NetworkStore {
 
   @Override
   public CompletableFuture<Tick> tick(String proxyId, int count, Collection<String> servers,
-      String instance, long ttlMillis, String candidateGeneration) {
+      String instance, boolean draining, long ttlMillis, String candidateGeneration) {
     return run(() -> {
       long now = clock.getAsLong();
       boolean created = generation == null;
@@ -107,11 +107,11 @@ public final class LocalStore implements NetworkStore {
       }
       final ProxyEntry before = live(proxyId, now);
       proxies.put(proxyId, new ProxyEntry(count, now, now + ttlMillis, List.copyOf(servers),
-          instance));
+          instance, draining));
       members.computeIfAbsent(proxyId, k -> new HashSet<>());
       List<ProxyState> states = new ArrayList<>();
       for (String id : members.keySet()) {
-        states.add(state(id, now).orElse(new ProxyState(id, -1, -1, List.of(), "")));
+        states.add(state(id, now).orElse(new ProxyState(id, -1, -1, List.of(), "", false)));
       }
       return new Tick(generation, created, before != null,
           before == null ? "" : before.instance(), states);
@@ -121,7 +121,7 @@ public final class LocalStore implements NetworkStore {
   private Optional<ProxyState> state(String id, long now) {
     ProxyEntry e = live(id, now);
     return e == null ? Optional.empty() : Optional.of(new ProxyState(id, e.players(),
-        now - e.seen(), e.servers(), e.instance()));
+        now - e.seen(), e.servers(), e.instance(), e.draining()));
   }
 
   @Override

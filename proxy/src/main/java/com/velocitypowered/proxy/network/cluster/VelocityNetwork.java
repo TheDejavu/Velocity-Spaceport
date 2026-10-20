@@ -40,7 +40,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public final class VelocityNetwork implements Network {
 
-  private record Node(String getId, int getPlayerCount) implements ProxyNode {
+  private record Node(String getId, int getPlayerCount, boolean isDraining) implements ProxyNode {
   }
 
   private final VelocityServer server;
@@ -89,10 +89,10 @@ public final class VelocityNetwork implements Network {
   @Override
   public Collection<ProxyNode> getProxies() {
     List<ProxyNode> nodes = new ArrayList<>();
-    nodes.add(new Node(getProxyId(), server.getPlayerCount()));
+    nodes.add(new Node(getProxyId(), server.getPlayerCount(), server.getHealth().isDraining()));
     if (cluster != null) {
       for (ProxyState p : cluster.liveRemotes()) {
-        nodes.add(new Node(p.id(), p.players()));
+        nodes.add(new Node(p.id(), p.players(), p.draining()));
       }
     }
     return nodes;
@@ -149,6 +149,21 @@ public final class VelocityNetwork implements Network {
           : CompletableFuture.completedFuture(false);
     }
     return remote.command(proxyId, command);
+  }
+
+  @Override
+  public boolean isDraining() {
+    return server.getHealth().isDraining();
+  }
+
+  @Override
+  public CompletableFuture<Void> drain() {
+    return server.getHealth().drain();
+  }
+
+  @Override
+  public void cancelDrain() {
+    server.getHealth().cancelDrain();
   }
 
   /**

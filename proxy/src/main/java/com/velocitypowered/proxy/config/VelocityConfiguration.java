@@ -1053,11 +1053,15 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param store "redis", or "local" (in memory, one proxy)
    * @param duplicateLogin "newest-wins" or "deny-new", for a player already on another proxy
    * @param redisDownPolicy "stop-logins" or "local-only" (admit without the network check)
+   * @param healthBind address of the health/metrics HTTP listener, empty for none
+   * @param healthInterval seconds a load balancer needs to notice a failing health check
+   * @param drainTimeout seconds a drain may take at most
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
-                              String store, String duplicateLogin, String redisDownPolicy) {
+                              String store, String duplicateLogin, String redisDownPolicy,
+                              String healthBind, int healthInterval, int drainTimeout) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
-        "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins");
+        "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120);
 
     /**
      * Validates the choices.
@@ -1100,7 +1104,10 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("key-prefix", DEFAULT.keyPrefix()),
           config.getOrElse("store", DEFAULT.store()),
           config.getOrElse("duplicate-login", DEFAULT.duplicateLogin()),
-          config.getOrElse("redis-down-policy", DEFAULT.redisDownPolicy()));
+          config.getOrElse("redis-down-policy", DEFAULT.redisDownPolicy()),
+          config.getOrElse("health-bind", DEFAULT.healthBind()),
+          config.getIntOrElse("health-interval", DEFAULT.healthInterval()),
+          config.getIntOrElse("drain-timeout", DEFAULT.drainTimeout()));
     }
   }
 }

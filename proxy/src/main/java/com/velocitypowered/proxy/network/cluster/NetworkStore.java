@@ -40,12 +40,13 @@ public interface NetworkStore extends AutoCloseable {
    * @param players players on this proxy
    * @param servers backend servers this proxy has players on
    * @param instance this process (a random id), to notice another live proxy with the same id
+   * @param draining whether this proxy is draining (takes no new players from the balancer)
    * @param ttlMillis how long this proxy's record lives without another tick
    * @param candidateGeneration generation to write if the store has none
    * @return the tick result
    */
   CompletableFuture<Tick> tick(String proxyId, int players, Collection<String> servers,
-      String instance, long ttlMillis, String candidateGeneration);
+      String instance, boolean draining, long ttlMillis, String candidateGeneration);
 
   /**
    * A tick without servers and instance, for tests and tools.
@@ -58,7 +59,7 @@ public interface NetworkStore extends AutoCloseable {
    */
   default CompletableFuture<Tick> tick(String proxyId, int players, long ttlMillis,
       String candidateGeneration) {
-    return tick(proxyId, players, List.of(), "", ttlMillis, candidateGeneration);
+    return tick(proxyId, players, List.of(), "", false, ttlMillis, candidateGeneration);
   }
 
   /**
@@ -164,9 +165,10 @@ public interface NetworkStore extends AutoCloseable {
    * @param ageMillis time since it was last seen, -1 if its record is gone
    * @param servers backend servers it has players on
    * @param instance the process that wrote the record
+   * @param draining whether it is draining
    */
   record ProxyState(String id, int players, long ageMillis, List<String> servers,
-                    String instance) {
+                    String instance, boolean draining) {
   }
 
   /**

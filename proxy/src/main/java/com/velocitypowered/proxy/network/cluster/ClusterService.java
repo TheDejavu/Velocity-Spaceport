@@ -42,6 +42,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.apache.logging.log4j.LogManager;
@@ -108,6 +109,13 @@ public final class ClusterService implements AutoCloseable {
   private final String instance = UUID.randomUUID().toString();
   private final MessageBus bus;
   private volatile boolean duplicateId;
+  private volatile boolean draining;
+  private final LongAdder claimsOk = new LongAdder();
+  private final LongAdder claimsDenied = new LongAdder();
+  private final LongAdder claimsUnavailable = new LongAdder();
+  private final LongAdder storeErrors = new LongAdder();
+  private volatile long tickMicros;
+  private volatile long tickMicrosAvg;
   private long lastClash;
   private volatile VelocityNetworkPlayer.@Nullable Actions actions;
   private volatile long epoch;
@@ -173,7 +181,7 @@ public final class ClusterService implements AutoCloseable {
       store.subscribe("msg:all", this::onMessage).get(5, TimeUnit.SECONDS);
       store.subscribe("msg:" + proxyId, this::onMessage).get(5, TimeUnit.SECONDS);
       Tick first = store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance,
-          TTL_MILLIS, candidateGeneration).get(5, TimeUnit.SECONDS);
+          draining, TTL_MILLIS, candidateGeneration).get(5, TimeUnit.SECONDS);
       applyTick(first);
       logger.info("Joined the network as {} ({} proxies, {} players)", proxyId,
           first.proxies().size(), getPlayerCount());
@@ -202,17 +210,22 @@ public final class ClusterService implements AutoCloseable {
       return;
     }
     tickInFlight = true;
-    store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance, TTL_MILLIS,
-            candidateGeneration)
+    long sent = System.nanoTime();
+    store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance, draining,
+            TTL_MILLIS, candidateGeneration)
         .orTimeout(2, TimeUnit.SECONDS)
         .whenComplete((t, ex) -> timer.execute(() -> {
           tickInFlight = false;
           if (ex != null) {
+            storeErrors.increment();
             if (!storeDown) {
               storeDown = true;
               logger.warn("Lost the network store: {}", rootMessage(ex));
             }
           } else {
+            long micros = (System.nanoTime() - sent) / 1000;
+            tickMicros = micros;
+            tickMicrosAvg = tickMicrosAvg == 0 ? micros : (tickMicrosAvg * 15 + micros) / 16;
             applyTick(t);
           }
         }));
@@ -320,6 +333,7 @@ public final class ClusterService implements AutoCloseable {
         ThreadLocalRandom.current().nextLong(), null, ip, System.currentTimeMillis());
     CompletableFuture<LoginResult> result = new CompletableFuture<>();
     if (duplicateId || (!isReady() && !localOnlyWhenDown)) {
+      claimsUnavailable.increment();
       result.complete(LoginResult.denied(UNAVAILABLE));
       return result;
     }
@@ -362,6 +376,7 @@ public final class ClusterService implements AutoCloseable {
     private void claimed(@Nullable Claim c, @Nullable Throwable ex) {
       long now = System.currentTimeMillis();
       if (ex != null) {
+        storeErrors.increment();
         if (now - start < LOGIN_BUDGET_MILLIS) {
           retry(Math.min(500, 50L << Math.min(failures++, 4)));
         } else if (localOnlyWhenDown) {
@@ -370,6 +385,7 @@ public final class ClusterService implements AutoCloseable {
           pendingResync = true;
           admitted();
         } else {
+          claimsUnavailable.increment();
           result.complete(LoginResult.denied(UNAVAILABLE));
         }
         return;
@@ -379,6 +395,7 @@ public final class ClusterService implements AutoCloseable {
         return;
       }
       if (!newestWins || now - start > KICK_WAIT_MILLIS) {
+        claimsDenied.increment();
         result.complete(LoginResult.denied(ALREADY_CONNECTED));
         return;
       }
@@ -391,6 +408,7 @@ public final class ClusterService implements AutoCloseable {
     }
 
     private void admitted() {
+      claimsOk.increment();
       Session s = new Session(record);
       sessions.put(record.uuid(), s);
       result.complete(new LoginResult(record.session(), null));
@@ -592,8 +610,59 @@ public final class ClusterService implements AutoCloseable {
   }
 
   /**
-   * Whether this proxy should take new players: false once the store has been unreachable for
-   * {@link #READY_GRACE_MILLIS}.
+   * Why this proxy should not take new players, or null if it may. Being cut off from the store
+   * counts only under the stop-logins policy, after {@link #READY_GRACE_MILLIS}.
+   *
+   * @return the reason, or null
+   */
+  public @Nullable String readyProblem() {
+    if (duplicateId) {
+      return "another live proxy uses this proxy-id";
+    }
+    if (!localOnlyWhenDown && storeDown
+        && System.currentTimeMillis() - lastTickOk >= READY_GRACE_MILLIS) {
+      return "network store unreachable";
+    }
+    return null;
+  }
+
+  /**
+   * Marks this proxy draining in the network record (or not), from the next tick on.
+   *
+   * @param draining whether it is draining
+   */
+  public void setDraining(boolean draining) {
+    this.draining = draining;
+  }
+
+  public boolean isDraining() {
+    return draining;
+  }
+
+  /**
+   * Counters for /metrics.
+   *
+   * @param claimsOk logins the network admitted
+   * @param claimsDenied logins refused as already connected elsewhere
+   * @param claimsUnavailable logins refused because the store was unreachable
+   * @param storeErrors failed store calls (ticks and claims)
+   * @param tickMicros last tick round trip
+   * @param tickMicrosAvg smoothed tick round trip
+   * @param busRequests requests sent to other proxies
+   * @param busTimeouts requests that got no answer
+   */
+  public record Stats(long claimsOk, long claimsDenied, long claimsUnavailable, long storeErrors,
+                      long tickMicros, long tickMicrosAvg, long busRequests, long busTimeouts) {
+  }
+
+  public Stats stats() {
+    return new Stats(claimsOk.sum(), claimsDenied.sum(), claimsUnavailable.sum(), storeErrors.sum(),
+        tickMicros, tickMicrosAvg, bus.requests(), bus.timeouts());
+  }
+
+  /**
+   * Whether logins may be checked against the store: false once it has been unreachable for
+   * {@link #READY_GRACE_MILLIS}, or while another proxy uses this id.
    *
    * @return true if ready
    */

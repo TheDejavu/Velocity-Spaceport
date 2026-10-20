@@ -226,3 +226,16 @@ duplicate-login = "newest-wins"
 # logins possible), "local-only" lets them in without the network check and re-checks them once
 # Redis is back. Players already online are never kicked either way.
 redis-down-policy = "stop-logins"
+
+# Small HTTP listener for load balancers and monitoring: /health/live, /health/ready (503 while
+# starting, draining, cut off from Redis or clashing with another proxy's id) and /metrics.
+# Empty (the default) turns it off. Bind it to a private address, e.g. "127.0.0.1:25890".
+health-bind = ""
+
+# Seconds your load balancer needs to notice a failing /health/ready (check interval x fall count).
+# A drain waits this long after turning not-ready before it marks the proxy draining.
+health-interval = 5
+
+# Seconds a drain (/spaceport drain, or shutting down) may take at most. Your service manager's
+# stop timeout must be longer than this.
+drain-timeout = 120

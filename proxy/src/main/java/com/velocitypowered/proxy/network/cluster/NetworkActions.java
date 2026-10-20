@@ -29,6 +29,7 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -285,9 +286,12 @@ public final class NetworkActions implements VelocityNetworkPlayer.Actions {
     Set<String> here = new HashSet<>(localServers());
     Map<String, List<String>> byProxy = new HashMap<>();
     Map<String, String> deliverer = new HashMap<>();
-    for (ProxyState proxy : cluster.liveRemotes()) {
+    // Non-draining proxies first, then the lowest id.
+    List<ProxyState> remotes = new ArrayList<>(cluster.liveRemotes());
+    remotes.sort(Comparator.comparing(ProxyState::draining).thenComparing(ProxyState::id));
+    for (ProxyState proxy : remotes) {
       for (String name : proxy.servers()) {
-        deliverer.merge(name, proxy.id(), (a, b) -> a.compareTo(b) <= 0 ? a : b);
+        deliverer.putIfAbsent(name, proxy.id());
       }
     }
     Collection<RegisteredServer> targets = only == null ? server.getAllServers()

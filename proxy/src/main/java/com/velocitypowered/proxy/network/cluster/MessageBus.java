@@ -33,6 +33,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -96,11 +97,21 @@ public final class MessageBus {
       .expireAfterWrite(Duration.ofSeconds(30))
       .build();
   private final AtomicLong ids = new AtomicLong(ThreadLocalRandom.current().nextLong());
+  private final LongAdder requests = new LongAdder();
+  private final LongAdder timeouts = new LongAdder();
 
   MessageBus(NetworkStore store, String proxyId, ScheduledExecutorService timer) {
     this.store = store;
     this.proxyId = proxyId;
     this.timer = timer;
+  }
+
+  public long requests() {
+    return requests.sum();
+  }
+
+  public long timeouts() {
+    return timeouts.sum();
   }
 
   public void register(byte action, Handler handler) {
@@ -138,6 +149,7 @@ public final class MessageBus {
    */
   public CompletableFuture<Reply> request(String proxy, byte action, byte[] payload) {
     long id = ids.incrementAndGet();
+    requests.increment();
     CompletableFuture<Reply> reply = new CompletableFuture<>();
     pending.put(id, reply);
     byte[] frame = encode(out -> {
@@ -162,6 +174,7 @@ public final class MessageBus {
       if (attempt < ATTEMPTS) {
         send(proxy, id, frame, reply, attempt + 1);
       } else {
+        timeouts.increment();
         pending.remove(id);
         reply.completeExceptionally(new TimeoutException("no answer from proxy " + proxy));
       }

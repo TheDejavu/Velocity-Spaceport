@@ -88,4 +88,25 @@ public interface Network {
    * @return true if the proxy ran it and the command succeeded
    */
   CompletableFuture<Boolean> executeCommand(String proxyId, String command);
+
+  /**
+   * Returns whether this proxy is draining.
+   *
+   * @return true if draining
+   */
+  boolean isDraining();
+
+  /**
+   * Starts draining this proxy: its health check turns not ready at once so the load balancer
+   * stops sending players, and after the configured health interval it is marked draining in the
+   * network. Players that still arrive are let in.
+   *
+   * @return completes when this proxy is marked draining in the network
+   */
+  CompletableFuture<Void> drain();
+
+  /**
+   * Stops a drain; the proxy takes new players again.
+   */
+  void cancelDrain();
 }

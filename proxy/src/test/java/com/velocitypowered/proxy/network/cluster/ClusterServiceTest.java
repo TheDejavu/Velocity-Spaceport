@@ -89,7 +89,7 @@ class ClusterServiceTest {
   private FakeProxy proxy(String id, String duplicateLogin, String downPolicy) {
     FakeProxy p = new FakeProxy();
     NetworkConfig config = new NetworkConfig(true, id, "", "", "local", duplicateLogin,
-        downPolicy);
+        downPolicy, "", 5, 120);
     p.service = new ClusterService(config, id, store, p);
     p.service.start();
     services.add(p.service);
@@ -256,7 +256,7 @@ class ClusterServiceTest {
     proxy("a");
     FakeProxy twin = new FakeProxy();
     twin.service = new ClusterService(new NetworkConfig(true, "a", "", "", "local", "newest-wins",
-        "stop-logins"), "a", store, twin);
+        "stop-logins", "", 5, 120), "a", store, twin);
     assertThrows(IllegalStateException.class, twin.service::start);
   }
 
@@ -264,9 +264,29 @@ class ClusterServiceTest {
   void idClashAtRuntimeStopsLogins() throws Exception {
     FakeProxy a = proxy("a");
     assertTrue(a.service.isReady());
-    store.tick("a", 0, List.of(), "intruder", 15_000, "x").join();
+    store.tick("a", 0, List.of(), "intruder", false, 15_000, "x").join();
     await(() -> !a.service.isReady());
     assertEquals(ClusterService.UNAVAILABLE, a.login(UUID.randomUUID(), "Steve").denyReason());
+  }
+
+  @Test
+  void notReadyAfterTheGraceUnderStopLogins() throws Exception {
+    FakeProxy a = proxy("a");
+    final FakeProxy b = proxy("b", "newest-wins", "local-only");
+    assertNull(a.service.readyProblem());
+    store.setDown(true);
+    Thread.sleep(ClusterService.READY_GRACE_MILLIS + 1_000);
+    assertEquals("network store unreachable", a.service.readyProblem());
+    assertNull(b.service.readyProblem()); // local-only keeps taking players
+    store.setDown(false);
+    await(() -> a.service.readyProblem() == null);
+  }
+
+  @Test
+  void drainingIsPublished() throws Exception {
+    FakeProxy a = proxy("a");
+    a.service.setDraining(true);
+    await(() -> store.proxy("a").join().map(NetworkStore.ProxyState::draining).orElse(false));
   }
 
   @Test

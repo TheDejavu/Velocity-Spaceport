@@ -20,4 +20,11 @@ public interface ProxyNode {
    * @return the player count
    */
   int getPlayerCount();
+
+  /**
+   * Returns whether this proxy is draining (taking no new players from the load balancer).
+   *
+   * @return true if draining
+   */
+  boolean isDraining();
 }
