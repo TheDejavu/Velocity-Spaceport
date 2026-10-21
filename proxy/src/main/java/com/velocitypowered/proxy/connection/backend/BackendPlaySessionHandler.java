@@ -44,6 +44,8 @@ import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
 import com.velocitypowered.proxy.connection.player.resourcepack.handler.ResourcePackHandler;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
+import com.velocitypowered.proxy.network.BackendChannelInitializer;
+import com.velocitypowered.proxy.network.Connections;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
@@ -78,7 +80,9 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.handler.timeout.ReadTimeoutException;
+import io.netty.handler.timeout.ReadTimeoutHandler;
 import java.net.InetSocketAddress;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import net.kyori.adventure.key.Key;
 import org.apache.logging.log4j.LogManager;
@@ -129,6 +133,13 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
     MinecraftConnection serverMc = serverConn.ensureConnected();
     PassthroughHandler.install(serverMc, playerConnection);
+    int configured = server.getConfiguration().getReadTimeout();
+    int playTimeout = BackendChannelInitializer.backendReadTimeout(configured);
+    if (playTimeout != configured
+        && serverMc.getChannel().pipeline().get(Connections.READ_TIMEOUT) != null) {
+      serverMc.getChannel().pipeline().replace(Connections.READ_TIMEOUT, Connections.READ_TIMEOUT,
+          new ReadTimeoutHandler(playTimeout, TimeUnit.MILLISECONDS));
+    }
     if (server.getConfiguration().isBungeePluginChannelEnabled()) {
       serverMc.write(PluginMessageUtil.constructChannelsPacket(serverMc.getProtocolVersion(),
           ImmutableList.of(getBungeeCordChannel(serverMc.getProtocolVersion()))
