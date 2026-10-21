@@ -52,8 +52,13 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public final class ConnectionManager {
 
-  private static final WriteBufferWaterMark SERVER_WRITE_MARK = new WriteBufferWaterMark(1 << 20,
-      1 << 21);
+  // Spaceport: per-player write buffer before backend reads pause. 0 keeps the stock 1-2 MiB
+  // marks; lower trades some CPU (more pauses during bursts) for less memory.
+  private static final int CLIENT_HIGH_WATER = Integer.getInteger("spaceport.client-write-buffer",
+      0);
+  private static final WriteBufferWaterMark SERVER_WRITE_MARK = CLIENT_HIGH_WATER > 0
+      ? new WriteBufferWaterMark(CLIENT_HIGH_WATER / 2, CLIENT_HIGH_WATER)
+      : new WriteBufferWaterMark(1 << 20, 1 << 21);
   private static final Logger LOGGER = LogManager.getLogger(ConnectionManager.class);
   private final Multimap<InetSocketAddress, Endpoint> endpoints = HashMultimap.create();
   private final TransportType transportType;

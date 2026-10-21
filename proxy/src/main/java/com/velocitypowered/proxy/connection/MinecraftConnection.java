@@ -73,9 +73,11 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import net.kyori.adventure.text.Component;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -87,6 +89,9 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public class MinecraftConnection extends ChannelInboundHandlerAdapter {
 
   private static final Logger logger = LogManager.getLogger(MinecraftConnection.class);
+  // Spaceport: a client that has not drained its write buffer for this long is not coming back.
+  private static final long UNWRITABLE_TIMEOUT_MS =
+      Long.getLong("spaceport.unwritable-timeout", 30_000L);
 
   private final @Nullable UUID sessionId;
   private final Channel channel;
@@ -100,6 +105,7 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
   public final VelocityServer server;
   private ConnectionType connectionType = ConnectionTypes.UNDETERMINED;
   private boolean knownDisconnect = false;
+  private @Nullable ScheduledFuture<?> stuckCheck;
   private volatile long lastReadNanos = System.nanoTime();
 
   /**
@@ -231,6 +237,20 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
 
   @Override
   public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+    if (UNWRITABLE_TIMEOUT_MS > 0 && association instanceof ConnectedPlayer player) {
+      if (!channel.isWritable() && stuckCheck == null) {
+        stuckCheck = channel.eventLoop().schedule(() -> {
+          stuckCheck = null;
+          if (channel.isActive() && !channel.isWritable()) {
+            logger.info("{} stopped reading for {} ms, disconnecting", player, UNWRITABLE_TIMEOUT_MS);
+            player.disconnect(Component.translatable("disconnect.timeout"));
+          }
+        }, UNWRITABLE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+      } else if (channel.isWritable() && stuckCheck != null) {
+        stuckCheck.cancel(false);
+        stuckCheck = null;
+      }
+    }
     if (activeSessionHandler != null) {
       activeSessionHandler.writabilityChanged();
     }

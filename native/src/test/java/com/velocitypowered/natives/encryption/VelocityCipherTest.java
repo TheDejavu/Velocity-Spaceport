@@ -58,6 +58,38 @@ class VelocityCipherTest {
   }
 
   @Test
+  @EnabledOnOs({LINUX})
+  void nativeMatchesJava() throws GeneralSecurityException {
+    // a round trip passes for any self-consistent cipher; compare with the JDK's AES/CFB8 too,
+    // in uneven pieces so state carries across calls
+    VelocityCipherFactory factory = Natives.cipher.get();
+    VelocityCipher nativeEnc = factory.forEncryption(new SecretKeySpec(AES_KEY, "AES"));
+    VelocityCipher javaEnc = JavaVelocityCipher.FACTORY.forEncryption(
+        new SecretKeySpec(AES_KEY, "AES"));
+    VelocityCipher nativeDec = factory.forDecryption(new SecretKeySpec(AES_KEY, "AES"));
+    Random random = new Random(2);
+    try {
+      for (int offset = 0; offset < TEST_DATA.length; ) {
+        int len = Math.min(1 + random.nextInt(700), TEST_DATA.length - offset);
+        ByteBuf a = Unpooled.directBuffer().writeBytes(TEST_DATA, offset, len);
+        ByteBuf b = Unpooled.buffer().writeBytes(TEST_DATA, offset, len);
+        nativeEnc.process(a);
+        javaEnc.process(b);
+        assertTrue(ByteBufUtil.equals(a, b), "ciphertext differs at " + offset);
+        nativeDec.process(a);
+        assertTrue(ByteBufUtil.equals(a, Unpooled.wrappedBuffer(TEST_DATA, offset, len)));
+        a.release();
+        b.release();
+        offset += len;
+      }
+    } finally {
+      nativeEnc.close();
+      javaEnc.close();
+      nativeDec.close();
+    }
+  }
+
+  @Test
   void javaIntegrityCheckHeap() throws GeneralSecurityException {
     check(JavaVelocityCipher.FACTORY, Unpooled::buffer);
   }
