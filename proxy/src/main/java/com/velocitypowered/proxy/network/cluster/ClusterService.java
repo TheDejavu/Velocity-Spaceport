@@ -132,6 +132,7 @@ public final class ClusterService implements AutoCloseable {
   private volatile long tickMicros;
   private volatile long tickMicrosAvg;
   private long lastClash;
+  private long sweepPausedUntil;
   private volatile VelocityNetworkPlayer.@Nullable Actions actions;
   private volatile long epoch;
   private volatile @Nullable String generation;
@@ -287,6 +288,8 @@ public final class ClusterService implements AutoCloseable {
     if (storeDown) {
       storeDown = false;
       logger.info("Network store reachable again");
+      // Every proxy was cut off just like us: give them time to tick before calling them dead.
+      sweepPausedUntil = System.currentTimeMillis() + DEAD_AFTER_MILLIS + TICK_MILLIS * 4;
     }
     lastTickOk = System.currentTimeMillis();
     if (pendingResync) {
@@ -303,7 +306,7 @@ public final class ClusterService implements AutoCloseable {
         remote += p.players();
       } else {
         Long last = sweepAttempts.get(p.id());
-        if (last == null || now - last > DEAD_AFTER_MILLIS) {
+        if (now >= sweepPausedUntil && (last == null || now - last > DEAD_AFTER_MILLIS)) {
           sweepAttempts.put(p.id(), now);
           store.sweep(p.id(), DEAD_AFTER_MILLIS, false, config.lastServerTtl() * 1000L).thenAccept(n -> {
             if (n >= 0) {
