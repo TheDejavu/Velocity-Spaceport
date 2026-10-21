@@ -18,6 +18,7 @@
 package com.velocitypowered.proxy.network.cluster;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -311,6 +312,20 @@ class ClusterServiceTest {
     assertEquals("lobby", b.login(steve, "Steve").route());
     // the same ticket again (replay) is refused
     assertTrue(b.service.redeem(ticket, "192.0.2.9", "Steve", steve).join().isEmpty());
+  }
+
+  @Test
+  void ticketDuringStoreOutageRoutesButDoesNotReplaceMojang() throws Exception {
+    FakeProxy a = proxy("a");
+    FakeProxy b = proxy("b");
+    UUID steve = UUID.randomUUID();
+    byte[] ticket = a.service.issueTicket(steve, "Steve", "lobby", "192.0.2.9");
+    store.setDown(true);
+    var redeemed = b.service.redeem(ticket, "192.0.2.9", "Steve", steve).join();
+    store.setDown(false);
+    assertTrue(redeemed.isPresent());
+    assertFalse(redeemed.get().nonceChecked());
+    assertEquals("lobby", b.login(steve, "Steve").route());
   }
 
   @Test

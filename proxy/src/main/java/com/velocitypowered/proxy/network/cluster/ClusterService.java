@@ -747,8 +747,10 @@ public final class ClusterService implements AutoCloseable {
    *
    * @param ticket the ticket
    * @param properties the player's profile properties (JSON) from the shared cache, or null
+   * @param nonceChecked whether the single-use nonce was checked; only then may the ticket
+   *     replace the Mojang check (otherwise it only routes)
    */
-  public record Redeemed(RouteTicket ticket, @Nullable String properties) {
+  public record Redeemed(RouteTicket ticket, @Nullable String properties, boolean nonceChecked) {
   }
 
   /**
@@ -778,7 +780,16 @@ public final class ClusterService implements AutoCloseable {
     }
     RouteTicket t = verified.get();
     return store.useNonce(t.nonce(), RouteTicket.LIFETIME_MILLIS + RouteTicket.SKEW_MILLIS)
+        .handle((first, ex) -> ex != null ? null : first)
         .thenCompose(first -> {
+          if (first == null) {
+            // The store is unreachable (a failover): the ticket is genuine but its nonce cannot be
+            // checked, so it routes the player but does not stand in for Mojang.
+            if (!t.server().isEmpty()) {
+              ticketRoutes.put(t.uuid(), new TicketRoute(t.server(), now + 60_000));
+            }
+            return CompletableFuture.completedFuture(Optional.of(new Redeemed(t, null, false)));
+          }
           if (!first) {
             ticketsRejected.increment();
             return CompletableFuture.completedFuture(Optional.<Redeemed>empty());
@@ -789,7 +800,7 @@ public final class ClusterService implements AutoCloseable {
               ticketRoutes.put(t.uuid(), new TicketRoute(t.server(), now + 60_000));
             }
             return Optional.of(new Redeemed(t, p.map(NetworkStore.CachedProfile::properties)
-                .orElse(null)));
+                .orElse(null), true));
           });
         })
         .exceptionally(ex -> {

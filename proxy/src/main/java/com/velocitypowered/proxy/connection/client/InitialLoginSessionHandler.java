@@ -200,7 +200,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
           }
           PreLoginComponentResult result = this.preLoginResult;
           boolean online = server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed();
-          if (redeemed.isPresent() && online
+          if (redeemed.isPresent() && redeemed.get().nonceChecked() && online
               && server.getConfiguration().getNetworkConfig().skipAuthWithTicket()) {
             RouteTicket ticket = redeemed.get().ticket();
             String properties = redeemed.get().properties();
