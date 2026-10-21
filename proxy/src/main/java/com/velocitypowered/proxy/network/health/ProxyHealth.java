@@ -63,12 +63,20 @@ public final class ProxyHealth implements AutoCloseable {
   private volatile @Nullable TransferDrain transfers;
   private volatile @Nullable CompletableFuture<Void> transfersDone;
   private final LongAdder transferred = new LongAdder();
+  private final BedrockDetector bedrock;
   private volatile double loginsPerSecond;
   private int sample;
   private volatile @Nullable HttpServer http;
 
+  /**
+   * Creates the health service; nothing runs until {@link #start()}.
+   *
+   * @param server the proxy
+   */
   public ProxyHealth(VelocityServer server) {
     this.server = server;
+    this.bedrock = new BedrockDetector(id -> server.getPluginManager().getPlugin(id)
+        .flatMap(c -> c.getInstance()).map(instance -> instance.getClass().getClassLoader()));
   }
 
   private NetworkConfig config() {
@@ -184,7 +192,7 @@ public final class ProxyHealth implements AutoCloseable {
       }
       logger.info("Draining: marked draining in the network");
       if (cluster != null && cluster.canTransfer()) {
-        transfers = new TransferDrain(server, cluster, timer, transferred, deadline);
+        transfers = new TransferDrain(server, cluster, timer, transferred, deadline, bedrock);
         transfersDone = transfers.start();
       }
       marked.complete(null);
@@ -304,6 +312,10 @@ public final class ProxyHealth implements AutoCloseable {
           s.ticketsRejected());
       counter(out, "spaceport_auth_skipped_total", "Mojang session checks skipped with a ticket",
           s.authSkipped());
+      gauge(out, "spaceport_auth_outage_mode", "1 while Mojang outage mode is on",
+          cluster.authOutageMode() ? 1 : 0);
+      counter(out, "spaceport_auth_outage_logins_total", "logins let in by outage mode",
+          s.outageLogins());
     }
     return out.toString();
   }

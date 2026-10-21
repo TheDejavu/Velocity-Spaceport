@@ -57,7 +57,7 @@ class ProxyHealthTest {
     VelocityConfiguration configuration = mock(VelocityConfiguration.class);
     when(configuration.getNetworkConfig()).thenReturn(new NetworkConfig(true, "p1", "", "sp:",
         "local", "newest-wins", "stop-logins", "127.0.0.1:0", 1, 30, "", 25565, 50,
-        "network-secret.key", true, 21600, 300, false));
+        "network-secret.key", true, 21600, 300, false, false, 43200));
     when(server.getConfiguration()).thenReturn(configuration);
     when(server.getCluster()).thenReturn(cluster);
     VelocityNetwork network = mock(VelocityNetwork.class);
@@ -119,7 +119,7 @@ class ProxyHealthTest {
   void metrics() throws Exception {
     health.markStarted();
     health.loginCompleted();
-    when(cluster.stats()).thenReturn(new ClusterService.Stats(3, 1, 0, 2, 150, 120, 9, 1, 0, 0, 0));
+    when(cluster.stats()).thenReturn(new ClusterService.Stats(3, 1, 0, 2, 150, 120, 9, 1, 0, 0, 0, 0));
     String body = get("/metrics").body();
     assertTrue(body.contains("spaceport_ready 1\n"), body);
     assertTrue(body.contains("spaceport_players_local 7\n"), body);

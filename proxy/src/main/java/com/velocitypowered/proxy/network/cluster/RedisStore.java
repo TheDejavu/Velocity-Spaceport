@@ -171,6 +171,9 @@ public final class RedisStore implements NetworkStore {
       RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE);
 
   private static final Logger logger = LogManager.getLogger(RedisStore.class);
+  /** Test hook: extra latency on every store call (-Dspaceport.network.test-store-latency-ms). */
+  private static final long TEST_LATENCY_MILLIS =
+      Long.getLong("spaceport.network.test-store-latency-ms", 0);
 
   private final String prefix;
   private final String net;
@@ -254,7 +257,21 @@ public final class RedisStore implements NetworkStore {
     if (c == null) {
       return CompletableFuture.failedFuture(new IllegalStateException("not connected to Redis"));
     }
-    return op.apply(c.commands().async()).toCompletableFuture();
+    CompletableFuture<T> result = op.apply(c.commands().async()).toCompletableFuture();
+    if (TEST_LATENCY_MILLIS <= 0) {
+      return result;
+    }
+    // Test hook (slow-Redis drills): every answer arrives this much later.
+    CompletableFuture<T> delayed = new CompletableFuture<>();
+    result.whenComplete((v, ex) -> CompletableFuture.delayedExecutor(TEST_LATENCY_MILLIS,
+        TimeUnit.MILLISECONDS).execute(() -> {
+          if (ex != null) {
+            delayed.completeExceptionally(ex);
+          } else {
+            delayed.complete(v);
+          }
+        }));
+    return delayed;
   }
 
   private String playerKey(UUID player) {
@@ -398,7 +415,18 @@ public final class RedisStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Optional<CachedProfile>> profile(String name) {
+  public CompletableFuture<Void> put(String key, String value, long ttlMillis) {
+    return call(redis -> redis.set(prefix + "kv:" + key, value, SetArgs.Builder.px(ttlMillis)))
+        .thenApply(ok -> null);
+  }
+
+  @Override
+  public CompletableFuture<Optional<String>> get(String key) {
+    return call(redis -> redis.get(prefix + "kv:" + key)).thenApply(Optional::ofNullable);
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profileByName(String name) {
     return call(redis -> redis.get(prefix + "pname:" + name.toLowerCase(Locale.ROOT)))
         .thenCompose(id -> id == null ? CompletableFuture.completedFuture(Optional.empty())
             : profile(UUID.fromString(id)));

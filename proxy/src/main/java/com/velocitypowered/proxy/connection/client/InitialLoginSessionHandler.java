@@ -56,6 +56,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -285,7 +286,12 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
         url += "&ip=" + urlFormParameterEscaper().escape(playerIp);
       }
 
-      final HttpRequest httpRequest = HttpRequest.newBuilder()
+      final HttpRequest.Builder requestBuilder = HttpRequest.newBuilder();
+      if (server.getCluster() != null) {
+        // Spaceport: with the network on, a hanging session server counts as down after 10 s
+        requestBuilder.timeout(Duration.ofSeconds(10));
+      }
+      final HttpRequest httpRequest = requestBuilder
               .setHeader("User-Agent",
                       server.getVersion().getName() + "/" + server.getVersion().getVersion())
               .uri(URI.create(url))
@@ -301,7 +307,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
             if (throwable != null) {
               logger.error("Unable to authenticate player", throwable);
-              inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+              mojangDown(playerIp, serverId);
               return;
             }
 
@@ -317,6 +323,10 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
                       Component.translatable("multiplayer.disconnect.invalid_public_key"));
                 }
               }
+              ClusterService cluster = server.getCluster();
+              if (cluster != null) {
+                cluster.recordGoodLogin(profile.getId(), profile.getName(), playerIp);
+              }
               // All went well, initialize the session.
               mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
                   new AuthSessionHandler(server, inbound, profile, true, serverId));
@@ -329,7 +339,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
               logger.error(
                   "Got an unexpected error code {} whilst contacting Mojang to log in {} ({})",
                   response.statusCode(), login.getUsername(), playerIp);
-              inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+              mojangDown(playerIp, serverId);
             }
           }, mcConnection.eventLoop())
           .whenComplete((ignored, throwable) -> {
@@ -340,6 +350,29 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       mcConnection.close(true);
     }
     return true;
+  }
+
+  /**
+   * Mojang could not confirm the login. Spaceport: in outage mode (D9) a player whose last good
+   * login was from this address gets in with its cached profile; otherwise the usual refusal.
+   */
+  private void mojangDown(String playerIp, String serverId) {
+    ClusterService cluster = server.getCluster();
+    if (cluster == null || !cluster.authOutageMode()) {
+      inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+      return;
+    }
+    cluster.outageLogin(login.getUsername(), playerIp).thenAcceptAsync(profile -> {
+      if (mcConnection.isClosed()) {
+        return;
+      }
+      if (profile.isEmpty()) {
+        inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+        return;
+      }
+      mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+          new AuthSessionHandler(server, inbound, profile.get(), true, serverId));
+    }, mcConnection.eventLoop());
   }
 
   private void continueLogin(PreLoginComponentResult result) {

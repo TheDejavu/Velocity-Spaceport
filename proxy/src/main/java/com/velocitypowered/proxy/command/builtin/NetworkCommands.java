@@ -138,6 +138,20 @@ public final class NetworkCommands {
                       "velocity.command.spaceport-drain-cancelled", NamedTextColor.GREEN));
                   return Command.SINGLE_SUCCESS;
                 })))
+        .then(LiteralArgumentBuilder.<CommandSource>literal("auth-outage")
+            .requires(s -> server.getCluster() != null)
+            .then(LiteralArgumentBuilder.<CommandSource>literal("on").executes(context -> {
+              server.getCluster().setAuthOutageMode(true);
+              context.getSource().sendMessage(Component.translatable(
+                  "velocity.command.spaceport-auth-outage-on", NamedTextColor.YELLOW));
+              return Command.SINGLE_SUCCESS;
+            }))
+            .then(LiteralArgumentBuilder.<CommandSource>literal("off").executes(context -> {
+              server.getCluster().setAuthOutageMode(false);
+              context.getSource().sendMessage(Component.translatable(
+                  "velocity.command.spaceport-auth-outage-off", NamedTextColor.GREEN));
+              return Command.SINGLE_SUCCESS;
+            })))
         .then(LiteralArgumentBuilder.<CommandSource>literal("network")
             .executes(context -> {
               CommandSource source = context.getSource();

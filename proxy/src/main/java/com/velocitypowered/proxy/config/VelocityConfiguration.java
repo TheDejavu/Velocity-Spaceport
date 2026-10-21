@@ -1065,16 +1065,20 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param profileCacheTtl seconds a player's profile (name, skin) stays in the shared cache
    * @param lastServerTtl seconds a player whose proxy crashed is sent back to its last server
    * @param drainWaitForSave whether to wait for a backend {@code spaceport:saved} before a transfer
+   * @param authOutageMode whether players may log in with their cached profile while Mojang's
+   *     session servers fail, if their last good login was from the same address (D9)
+   * @param authOutageWindow seconds a good login counts for {@code authOutageMode}
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
                               String healthBind, int healthInterval, int drainTimeout,
                               String transferHost, int transferPort, int drainRate,
                               String transferSecretFile, boolean skipAuthWithTicket,
-                              int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave) {
+                              int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave,
+                              boolean authOutageMode, int authOutageWindow) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
         "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50,
-        "network-secret.key", true, 21600, 300, false);
+        "network-secret.key", true, 21600, 300, false, false, 43200);
 
     /**
      * Validates the choices.
@@ -1128,7 +1132,9 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("skip-auth-with-ticket", DEFAULT.skipAuthWithTicket()),
           config.getIntOrElse("profile-cache-ttl", DEFAULT.profileCacheTtl()),
           config.getIntOrElse("last-server-ttl", DEFAULT.lastServerTtl()),
-          config.getOrElse("drain-wait-for-save", DEFAULT.drainWaitForSave()));
+          config.getOrElse("drain-wait-for-save", DEFAULT.drainWaitForSave()),
+          config.getOrElse("auth-outage-mode", DEFAULT.authOutageMode()),
+          config.getIntOrElse("auth-outage-window", DEFAULT.authOutageWindow()));
     }
   }
 }

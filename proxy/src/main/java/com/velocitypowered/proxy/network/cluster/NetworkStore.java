@@ -172,7 +172,19 @@ public interface NetworkStore extends AutoCloseable {
 
   CompletableFuture<Optional<CachedProfile>> profile(UUID player);
 
-  CompletableFuture<Optional<CachedProfile>> profile(String name);
+  CompletableFuture<Optional<CachedProfile>> profileByName(String name);
+
+  /**
+   * Stores a small value under a key of this network (prefixed), with a lifetime.
+   *
+   * @param key the key
+   * @param value the value
+   * @param ttlMillis how long it lives
+   * @return completes when written
+   */
+  CompletableFuture<Void> put(String key, String value, long ttlMillis);
+
+  CompletableFuture<Optional<String>> get(String key);
 
   /**
    * A player's profile in the shared cache.

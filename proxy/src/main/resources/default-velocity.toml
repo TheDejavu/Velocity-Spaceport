@@ -266,3 +266,10 @@ last-server-ttl = 300
 # Before transferring a player, ask its backend server to save it (plugin message
 # "spaceport:save") and wait up to 2 seconds for "spaceport:saved".
 drain-wait-for-save = false
+
+# Mojang outage mode (off by default). While Mojang's session servers fail or time out, a player
+# whose last good login (on any proxy of the network) was from the same address within
+# auth-outage-window seconds may log in with its cached profile. Every such login is logged.
+# Can be switched at runtime with /spaceport auth-outage on|off.
+auth-outage-mode = false
+auth-outage-window = 43200

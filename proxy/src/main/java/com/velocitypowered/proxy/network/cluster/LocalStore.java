@@ -52,6 +52,7 @@ public final class LocalStore implements NetworkStore {
   private final Map<UUID, Owned> players = new HashMap<>();
   private final Map<String, UUID> names = new HashMap<>();
   private final Map<UUID, Expiring> routes = new HashMap<>();
+  private final Map<String, Expiring> values = new HashMap<>();
   private final Map<UUID, Expiring> lastServers = new HashMap<>();
   private final Map<String, Long> nonces = new HashMap<>();
   private final Map<UUID, CachedProfile> profiles = new HashMap<>();
@@ -85,6 +86,7 @@ public final class LocalStore implements NetworkStore {
     players.clear();
     names.clear();
     routes.clear();
+    values.clear();
     lastServers.clear();
     nonces.clear();
     profiles.clear();
@@ -286,7 +288,24 @@ public final class LocalStore implements NetworkStore {
   }
 
   @Override
-  public CompletableFuture<Optional<CachedProfile>> profile(String name) {
+  public CompletableFuture<Void> put(String key, String value, long ttlMillis) {
+    return run(() -> {
+      values.put(key, new Expiring(value, clock.getAsLong() + ttlMillis));
+      return null;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Optional<String>> get(String key) {
+    return run(() -> {
+      Expiring e = values.get(key);
+      return e == null || e.expires() <= clock.getAsLong() ? Optional.<String>empty()
+          : Optional.of(e.value());
+    });
+  }
+
+  @Override
+  public CompletableFuture<Optional<CachedProfile>> profileByName(String name) {
     return run(() -> Optional.ofNullable(profileNames.get(name.toLowerCase(Locale.ROOT)))
         .map(profiles::get));
   }

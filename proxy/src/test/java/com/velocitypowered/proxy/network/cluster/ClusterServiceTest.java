@@ -91,7 +91,7 @@ class ClusterServiceTest {
   private FakeProxy proxy(String id, String duplicateLogin, String downPolicy) {
     FakeProxy p = new FakeProxy();
     NetworkConfig config = new NetworkConfig(true, id, "", "", "local", duplicateLogin,
-        downPolicy, "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false);
+        downPolicy, "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false, false, 43200);
     p.service = new ClusterService(config, id, store, p);
     p.service.start();
     services.add(p.service);
@@ -265,7 +265,7 @@ class ClusterServiceTest {
     proxy("a");
     FakeProxy twin = new FakeProxy();
     twin.service = new ClusterService(new NetworkConfig(true, "a", "", "", "local", "newest-wins",
-        "stop-logins", "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false), "a", store,
+        "stop-logins", "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false, false, 43200), "a", store,
         twin);
     assertThrows(IllegalStateException.class, twin.service::start);
   }
@@ -345,6 +345,49 @@ class ClusterServiceTest {
     FakeProxy b = proxy("b");
     skew.addAndGet(ClusterService.DEAD_AFTER_MILLIS + 1_000);
     assertEquals("skyblock", b.login(steve, "Steve").route());
+  }
+
+  private FakeProxy outageProxy(String id, boolean on, int windowSeconds) {
+    FakeProxy p = new FakeProxy();
+    p.service = new ClusterService(new NetworkConfig(true, id, "", "", "local", "newest-wins",
+        "stop-logins", "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false, on,
+        windowSeconds), id, store, p);
+    p.service.start();
+    services.add(p.service);
+    return p;
+  }
+
+  @Test
+  void outageModeLetsKnownPlayersInFromTheSameAddress() throws Exception {
+    FakeProxy a = outageProxy("a", true, 600);
+    UUID steve = UUID.randomUUID();
+    a.service.recordGoodLogin(steve, "Steve", "192.0.2.5");
+    store.putProfile(new NetworkStore.CachedProfile(steve, "Steve",
+        "[{\"name\":\"textures\",\"value\":\"v\",\"signature\":\"s\"}]"), 60_000).join();
+    var profile = a.service.outageLogin("steve", "192.0.2.5").join();
+    assertTrue(profile.isPresent());
+    assertEquals(steve, profile.get().getId());
+    assertEquals("Steve", profile.get().getName());
+    assertEquals("textures", profile.get().getProperties().get(0).getName());
+    assertTrue(a.service.outageLogin("Steve", "192.0.2.6").join().isEmpty()); // other address
+    assertTrue(a.service.outageLogin("Alex", "192.0.2.5").join().isEmpty()); // never seen
+    assertEquals(1, a.service.stats().outageLogins());
+  }
+
+  @Test
+  void outageModeOffOrTooOld() throws Exception {
+    FakeProxy off = outageProxy("a", false, 600);
+    UUID steve = UUID.randomUUID();
+    off.service.recordGoodLogin(steve, "Steve", "192.0.2.5");
+    assertTrue(off.service.outageLogin("Steve", "192.0.2.5").join().isEmpty());
+    off.service.setAuthOutageMode(true); // live toggle
+    assertTrue(off.service.outageLogin("Steve", "192.0.2.5").join().isPresent());
+
+    FakeProxy shortWindow = outageProxy("b", true, 1);
+    UUID alex = UUID.randomUUID();
+    shortWindow.service.recordGoodLogin(alex, "Alex", "192.0.2.5");
+    Thread.sleep(1_100);
+    assertTrue(shortWindow.service.outageLogin("Alex", "192.0.2.5").join().isEmpty());
   }
 
   @Test

@@ -17,9 +17,12 @@
 
 package com.velocitypowered.proxy.network.cluster;
 
+import static com.velocitypowered.proxy.VelocityServer.GENERAL_GSON;
+
 import com.velocitypowered.api.event.network.NetworkPlayerJoinEvent;
 import com.velocitypowered.api.event.network.NetworkPlayerQuitEvent;
 import com.velocitypowered.api.event.network.NetworkPlayerServerChangeEvent;
+import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.Claim;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
@@ -35,6 +38,7 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -117,6 +121,8 @@ public final class ClusterService implements AutoCloseable {
   private final LongAdder ticketsAccepted = new LongAdder();
   private final LongAdder ticketsRejected = new LongAdder();
   private final LongAdder authSkipped = new LongAdder();
+  private final LongAdder outageLogins = new LongAdder();
+  private volatile boolean authOutage;
   private volatile boolean duplicateId;
   private volatile boolean draining;
   private final LongAdder claimsOk = new LongAdder();
@@ -169,6 +175,7 @@ public final class ClusterService implements AutoCloseable {
     this.localOnlyWhenDown = config.localOnlyWhenDown();
     this.bus = new MessageBus(store, proxyId, timer);
     this.config = config;
+    this.authOutage = config.authOutageMode();
   }
 
   /**
@@ -592,8 +599,96 @@ public final class ClusterService implements AutoCloseable {
   /** Name of the cookie that carries the transfer ticket. */
   public static final Key ROUTE_COOKIE = Key.key("spaceport", "route");
 
+  /**
+   * Whether Mojang outage mode is on (D9).
+   *
+   * @return true if on
+   */
+  public boolean authOutageMode() {
+    return authOutage;
+  }
+
+  /**
+   * Switches Mojang outage mode at runtime.
+   *
+   * @param on whether to let known players in while Mojang fails
+   */
+  public void setAuthOutageMode(boolean on) {
+    authOutage = on;
+    if (on) {
+      logger.warn("MOJANG OUTAGE MODE ON: while Mojang's session servers fail, players whose last"
+          + " good login was from the same address within {} s get in with their cached profile",
+          config.authOutageWindow());
+    } else {
+      logger.info("Mojang outage mode off");
+    }
+  }
+
+  /**
+   * Remembers a login Mojang confirmed, for outage mode.
+   *
+   * @param uuid the player
+   * @param name its name
+   * @param ip its address
+   */
+  public void recordGoodLogin(UUID uuid, String name, String ip) {
+    store.put("authok:" + name.toLowerCase(Locale.ROOT),
+            uuid + " " + ip + " " + System.currentTimeMillis(), config.authOutageWindow() * 1000L)
+        .exceptionally(ex -> null);
+  }
+
+  /**
+   * In outage mode, the profile a player may log in with while Mojang fails: its last good login
+   * must be from this address and recent enough. Every admission is logged.
+   *
+   * @param name the name the client logs in with
+   * @param ip its address
+   * @return the cached profile, or empty: then the login is refused as usual
+   */
+  public CompletableFuture<Optional<GameProfile>> outageLogin(String name, String ip) {
+    if (!authOutage) {
+      return CompletableFuture.completedFuture(Optional.empty());
+    }
+    return store.get("authok:" + name.toLowerCase(Locale.ROOT)).thenCompose(value -> {
+      String[] parts = value.map(v -> v.split(" ")).orElse(new String[0]);
+      long age = parts.length == 3 ? System.currentTimeMillis() - Long.parseLong(parts[2]) : -1;
+      if (parts.length != 3 || !parts[1].equals(ip) || age < 0
+          || age > config.authOutageWindow() * 1000L) {
+        logger.warn("Mojang outage mode: {} ({}) has no recent good login from this address;"
+            + " refused", name, ip);
+        return CompletableFuture.completedFuture(Optional.<GameProfile>empty());
+      }
+      UUID uuid = UUID.fromString(parts[0]);
+      return store.profile(uuid).thenApply(cached -> {
+        outageLogins.increment();
+        logger.warn("MOJANG OUTAGE MODE: letting {} ({}) in with its cached profile; last good"
+            + " login from this address {} min ago", name, ip, age / 60_000);
+        return Optional.of(new GameProfile(uuid, cached.map(NetworkStore.CachedProfile::name)
+            .orElse(name), cached.map(c -> List.of(GENERAL_GSON.fromJson(c.properties(),
+                GameProfile.Property[].class))).orElse(List.of())));
+      });
+    }).exceptionally(ex -> Optional.empty());
+  }
+
+  /**
+   * Whether the last heartbeat reached the store.
+   *
+   * @return true if the store is reachable
+   */
+  public boolean storeReachable() {
+    return !storeDown;
+  }
+
   public boolean hasTicketKeys() {
     return ticketKeys != null;
+  }
+
+  /** Test hook: this proxy's clock for tickets is off by this much (-Dspaceport.network.test-clock-skew-ms). */
+  private static final long TEST_CLOCK_SKEW_MILLIS =
+      Long.getLong("spaceport.network.test-clock-skew-ms", 0);
+
+  private static long ticketClock() {
+    return System.currentTimeMillis() + TEST_CLOCK_SKEW_MILLIS;
   }
 
   /** Where a ticket said a player goes; kept until its login reaches the claim. */
@@ -644,7 +739,7 @@ public final class ClusterService implements AutoCloseable {
       store.putRoute(uuid, server, 60_000).exceptionally(ex -> null);
     }
     return RouteTicket.issue(uuid, name, server == null ? "" : server, ip, proxyId,
-        System.currentTimeMillis()).sign(keys);
+        ticketClock()).sign(keys);
   }
 
   /**
@@ -673,7 +768,7 @@ public final class ClusterService implements AutoCloseable {
     if (keys == null || cookie == null) {
       return CompletableFuture.completedFuture(Optional.empty());
     }
-    long now = System.currentTimeMillis();
+    long now = ticketClock();
     Optional<RouteTicket> verified = RouteTicket.verify(cookie, keys, now)
         .filter(t -> t.name().equalsIgnoreCase(name) && t.ip().equals(ip)
             && (holder == null || holder.equals(t.uuid())));
@@ -814,7 +909,8 @@ public final class ClusterService implements AutoCloseable {
    */
   public record Stats(long claimsOk, long claimsDenied, long claimsUnavailable, long storeErrors,
                       long tickMicros, long tickMicrosAvg, long busRequests, long busTimeouts,
-                      long ticketsAccepted, long ticketsRejected, long authSkipped) {
+                      long ticketsAccepted, long ticketsRejected, long authSkipped,
+                      long outageLogins) {
   }
 
   /**
@@ -825,7 +921,7 @@ public final class ClusterService implements AutoCloseable {
   public Stats stats() {
     return new Stats(claimsOk.sum(), claimsDenied.sum(), claimsUnavailable.sum(), storeErrors.sum(),
         tickMicros, tickMicrosAvg, bus.requests(), bus.timeouts(), ticketsAccepted.sum(),
-        ticketsRejected.sum(), authSkipped.sum());
+        ticketsRejected.sum(), authSkipped.sum(), outageLogins.sum());
   }
 
   /**

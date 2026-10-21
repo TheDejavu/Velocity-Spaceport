@@ -176,7 +176,7 @@ public final class VelocityNetwork implements Network {
   @Override
   public CompletableFuture<Optional<GameProfile>> getCachedProfile(String username) {
     return cluster == null ? CompletableFuture.completedFuture(Optional.empty())
-        : cluster.store().profile(username).thenApply(p -> p.map(VelocityNetwork::toProfile));
+        : cluster.store().profileByName(username).thenApply(p -> p.map(VelocityNetwork::toProfile));
   }
 
   private static GameProfile toProfile(NetworkStore.CachedProfile p) {

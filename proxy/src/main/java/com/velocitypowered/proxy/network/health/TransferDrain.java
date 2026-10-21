@@ -52,7 +52,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * gets a signed ticket as the {@code spaceport:route} cookie and a Transfer to the load balancer,
  * which sends it to a proxy that is not draining; that proxy sends it back to the same backend
  * server. Clients older than 1.20.5 cannot be transferred: they are disconnected with a reconnect
- * message once everyone else has gone.
+ * message once everyone else has gone, and so are Bedrock players (see {@link BedrockDetector}).
+ * While the network store is unreachable the drain waits.
  */
 final class TransferDrain {
 
@@ -72,11 +73,13 @@ final class TransferDrain {
   private final Map<UUID, CompletableFuture<Void>> saves = new ConcurrentHashMap<>();
   private final LongAdder transferred;
   private final long deadline;
+  private final BedrockDetector bedrock;
   private boolean oldClientsKicked;
   private @Nullable ScheduledFuture<?> task;
 
   TransferDrain(VelocityServer server, ClusterService cluster, ScheduledExecutorService timer,
-      LongAdder transferred, long deadline) {
+      LongAdder transferred, long deadline, BedrockDetector bedrock) {
+    this.bedrock = bedrock;
     this.server = server;
     this.cluster = cluster;
     this.timer = timer;
@@ -119,6 +122,9 @@ final class TransferDrain {
         cancel();
         return;
       }
+      if (!cluster.storeReachable()) {
+        return; // tickets and route hints need the store; wait for it (bounded by the deadline)
+      }
       ConnectedPlayer next = nextPlayer();
       if (next != null) {
         transfer(next);
@@ -160,8 +166,10 @@ final class TransferDrain {
     return queue.poll();
   }
 
-  private static boolean canTransfer(ConnectedPlayer player) {
-    return player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5);
+  /** Java 1.20.5+ only; Bedrock players (Geyser) would be dropped by a Java Transfer. */
+  private boolean canTransfer(ConnectedPlayer player) {
+    return player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)
+        && !bedrock.isBedrock(player.getUniqueId());
   }
 
   /** Transfer works in configuration and play; a player still logging in waits. */
