@@ -78,6 +78,18 @@ All keys are documented in `velocity.toml`. Point the balancer's health check at
 
 To restart a proxy, run `/spaceport drain` on its console: it turns not-ready, transfers its players to the balancer, and the proxy can then be stopped (a normal shutdown drains too). `/spaceport drain cancel` aborts, `/spaceport network` shows the proxies and players per proxy.
 
+### Shared login rate limit
+
+Off by default. With `login-rate-limit = true` one address may start at most `login-rate-max` logins (default 20) per `login-rate-window` seconds (default 60), counted across all proxies, so a bot cannot get a fresh allowance by hitting each proxy in turn. It is checked right after the login packet, before the Mojang check, and does not replace Velocity's own `login-ratelimit`. Extra logins are refused with a "too many login attempts" message. The counter is in Redis and asked without blocking; if Redis is unreachable or slow the limit is skipped and logins go through. Refusals show up as `spaceport_login_rate_limited_total`. Do not set it too low for players who share an address.
+
+### Metrics and dashboard
+
+`/metrics` also has `spaceport_proxy_players{proxy}` and `spaceport_proxy_draining{proxy}` for every proxy, `spaceport_store_up`, and the existing store latency, login, claim and ticket counters. `docs/spaceport-grafana.json` is a ready Grafana 10+ dashboard for them (import it and pick your Prometheus data source).
+
+### Restarts without refused connections
+
+With `enable-reuse-port = true` (Linux, native transport; ignored on NIO and Windows with a log note) a new proxy process can bind the same port while the old one is still draining. Start the new process, then `/spaceport drain` the old one and stop it once it is empty. Off by default.
+
 ## Upstream pull requests included early
 
 Dropped once upstream merges them.
