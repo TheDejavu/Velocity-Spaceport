@@ -281,6 +281,9 @@ public final class LocalStore implements NetworkStore {
   public CompletableFuture<Long> rateHit(String key, long windowMillis) {
     return run(() -> {
       long now = clock.getAsLong();
+      if (rates.size() > 1024) {
+        rates.values().removeIf(r -> r[0] <= now); // bounded: only when it has grown
+      }
       long[] w = rates.get(key); // {window end, hits}
       if (w == null || w[0] <= now) {
         w = new long[] {now + windowMillis, 0};
