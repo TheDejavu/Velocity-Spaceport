@@ -56,6 +56,12 @@ public final class MessageBus {
   /** Nothing on the asked proxy handles the request (a plugin channel nobody listens to). */
   public static final byte NO_HANDLER = 4;
 
+  /**
+   * How long a handled request id is remembered: the longest request timeout of the plugin API (60
+   * s) plus a margin, so a resend never runs a handler twice.
+   */
+  static final Duration DEDUPE_RETENTION = Duration.ofSeconds(90);
+
   static final long ATTEMPT_MILLIS = 750;
   /** 8 attempts = 6 s: a Sentinel failover (3 s) plus the pub/sub connections coming back. */
   static final int ATTEMPTS = 8;
@@ -96,7 +102,7 @@ public final class MessageBus {
   private final Map<Byte, Handler> handlers = new ConcurrentHashMap<>();
   private final Map<Long, CompletableFuture<Reply>> pending = new ConcurrentHashMap<>();
   private final Cache<String, CompletableFuture<Reply>> handled = Caffeine.newBuilder()
-      .expireAfterWrite(Duration.ofSeconds(30))
+      .expireAfterWrite(DEDUPE_RETENTION)
       .build();
   private final AtomicLong ids = new AtomicLong(ThreadLocalRandom.current().nextLong());
   private final LongAdder requests = new LongAdder();

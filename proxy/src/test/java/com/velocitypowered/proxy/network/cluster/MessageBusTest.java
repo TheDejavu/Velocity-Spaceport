@@ -130,4 +130,9 @@ class MessageBusTest {
     Thread.sleep(MessageBus.ATTEMPT_MILLIS + 300);
     assertEquals(0, a.pendingRequests());
   }
+
+  @Test
+  void dedupeOutlivesTheLongestRequest() {
+    assertTrue(MessageBus.DEDUPE_RETENTION.compareTo(java.time.Duration.ofSeconds(60 + 15)) >= 0);
+  }
 }
