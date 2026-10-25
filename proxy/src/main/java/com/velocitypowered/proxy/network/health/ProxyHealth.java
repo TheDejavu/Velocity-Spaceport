@@ -19,6 +19,7 @@ package com.velocitypowered.proxy.network.health;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.velocitypowered.api.network.ProxyNode;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
@@ -282,6 +283,8 @@ public final class ProxyHealth implements AutoCloseable {
         server.getNetwork().getPlayerCount());
     gauge(out, "spaceport_proxies", "live proxies in the network, this one included",
         server.getNetwork().getProxies().size());
+    perProxy(out, "spaceport_proxy_players", "players per proxy of the network", false);
+    perProxy(out, "spaceport_proxy_draining", "1 while that proxy is draining", true);
     counter(out, "spaceport_logins_total", "logins completed on this proxy", logins.sum());
     counter(out, "spaceport_transfers_total", "players transferred away by drains",
         transferred.sum());
@@ -297,6 +300,8 @@ public final class ProxyHealth implements AutoCloseable {
           .append(s.claimsDenied()).append('\n')
           .append("spaceport_claims_total{result=\"unavailable\"} ")
           .append(s.claimsUnavailable()).append('\n');
+      gauge(out, "spaceport_store_up", "1 while the network store answers",
+          cluster.storeReachable() ? 1 : 0);
       counter(out, "spaceport_store_errors_total", "failed network store calls", s.storeErrors());
       gauge(out, "spaceport_store_latency_seconds", "last heartbeat round trip",
           s.tickMicros() / 1e6);
@@ -320,6 +325,20 @@ public final class ProxyHealth implements AutoCloseable {
           "logins refused by the shared per-address rate limit", s.loginsLimited());
     }
     return out.toString();
+  }
+
+  private void perProxy(StringBuilder out, String name, String help, boolean draining) {
+    out.append("# HELP ").append(name).append(' ').append(help).append('\n')
+        .append("# TYPE ").append(name).append(" gauge").append('\n');
+    for (ProxyNode node : server.getNetwork().getProxies()) {
+      out.append(name).append("{proxy=").append("\"").append(label(node.getId()))
+          .append("\"").append("} ")
+          .append(draining ? (node.isDraining() ? 1 : 0) : node.getPlayerCount()).append('\n');
+    }
+  }
+
+  private static String label(String value) {
+    return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
   }
 
   private static void gauge(StringBuilder out, String name, String help, double value) {

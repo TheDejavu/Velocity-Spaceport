@@ -26,6 +26,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.velocitypowered.api.network.ProxyNode;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
@@ -62,7 +63,15 @@ class ProxyHealthTest {
     when(server.getCluster()).thenReturn(cluster);
     VelocityNetwork network = mock(VelocityNetwork.class);
     when(network.getPlayerCount()).thenReturn(42);
-    when(network.getProxies()).thenReturn(List.of());
+    ProxyNode p1 = mock(ProxyNode.class);
+    when(p1.getId()).thenReturn("p1");
+    when(p1.getPlayerCount()).thenReturn(7);
+    ProxyNode p2 = mock(ProxyNode.class);
+    when(p2.getId()).thenReturn("p2");
+    when(p2.getPlayerCount()).thenReturn(35);
+    when(p2.isDraining()).thenReturn(true);
+    when(network.getProxies()).thenReturn(List.of(p1, p2));
+    when(cluster.storeReachable()).thenReturn(true);
     when(server.getNetwork()).thenReturn(network);
     when(server.getPlayerCount()).thenReturn(7);
     health = new ProxyHealth(server);
