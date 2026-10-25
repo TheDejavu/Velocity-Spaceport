@@ -418,6 +418,31 @@ public final class ClusterService implements AutoCloseable {
   }
 
   /**
+   * The rate limit key of an address: IPv4 as is (also when IPv4-mapped), IPv6 by its /64 prefix,
+   * without a scope id, so one customer cannot get a new allowance per address.
+   *
+   * @param ip a literal address
+   * @return the key
+   */
+  static String rateKey(String ip) {
+    int scope = ip.indexOf('%');
+    String literal = scope < 0 ? ip : ip.substring(0, scope);
+    if (literal.indexOf(':') < 0) {
+      return literal;
+    }
+    try {
+      byte[] b = java.net.InetAddress.getByName(literal).getAddress(); // a literal, no lookup
+      if (b.length == 4) {
+        return java.net.InetAddress.getByAddress(b).getHostAddress();
+      }
+      return String.format("%02x%02x:%02x%02x:%02x%02x:%02x%02x::/64", b[0], b[1], b[2], b[3],
+          b[4], b[5], b[6], b[7]);
+    } catch (java.net.UnknownHostException e) {
+      return literal;
+    }
+  }
+
+  /**
    * Shared login rate limit: counts a login attempt of an address across all proxies. Asks the
    * store without blocking, and fails open: if the limit is off, the store is down or does not
    * answer within a second, the login is allowed.
@@ -429,7 +454,7 @@ public final class ClusterService implements AutoCloseable {
     if (!config.loginRateLimit() || storeDown) {
       return CompletableFuture.completedFuture(true);
     }
-    return store.rateHit(ip, config.loginRateWindow() * 1000L)
+    return store.rateHit(rateKey(ip), config.loginRateWindow() * 1000L)
         .orTimeout(1, TimeUnit.SECONDS)
         .handle((hits, ex) -> {
           if (ex != null) {

@@ -334,6 +334,15 @@ class ClusterServiceTest {
   }
 
   @Test
+  void rateKeyGroupsAddresses() {
+    assertEquals("192.0.2.1", ClusterService.rateKey("192.0.2.1"));
+    assertEquals("192.0.2.1", ClusterService.rateKey("::ffff:192.0.2.1"));
+    String net = ClusterService.rateKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    assertEquals(net, ClusterService.rateKey("2001:db8:1:2::1%eth0"));
+    assertFalse(net.equals(ClusterService.rateKey("2001:db8:1:3::1")));
+  }
+
+  @Test
   void loginRateLimitWindowExpires() throws Exception {
     FakeProxy a = rateProxy("a", true, 1);
     assertTrue(a.service.allowLogin("192.0.2.1").get());
