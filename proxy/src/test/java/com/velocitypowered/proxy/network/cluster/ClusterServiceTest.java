@@ -261,6 +261,57 @@ class ClusterServiceTest {
     await(() -> owner(steve).isPresent());
   }
 
+  private FakeProxy rateProxy(String id, boolean on, int max) {
+    FakeProxy p = new FakeProxy();
+    p.service = new ClusterService(new NetworkConfig(true, id, "", "", "local", "newest-wins",
+        "stop-logins", "", 5, 120, "", 25565, 50, secret(), true, 21600, 300, false, false,
+        43200, on, max, 60), id, store, p);
+    p.service.start();
+    services.add(p.service);
+    return p;
+  }
+
+  @Test
+  void loginRateLimitIsSharedBetweenProxies() throws Exception {
+    FakeProxy a = rateProxy("a", true, 3);
+    FakeProxy b = rateProxy("b", true, 3);
+    assertTrue(a.service.allowLogin("192.0.2.1").get());
+    assertTrue(b.service.allowLogin("192.0.2.1").get());
+    assertTrue(a.service.allowLogin("192.0.2.1").get());
+    assertFalse(b.service.allowLogin("192.0.2.1").get());
+    assertFalse(a.service.allowLogin("192.0.2.1").get());
+    assertTrue(a.service.allowLogin("192.0.2.2").get()); // other addresses are not affected
+    assertEquals(2, a.service.stats().loginsLimited() + b.service.stats().loginsLimited());
+  }
+
+  @Test
+  void loginRateLimitWindowExpires() throws Exception {
+    FakeProxy a = rateProxy("a", true, 1);
+    assertTrue(a.service.allowLogin("192.0.2.1").get());
+    assertFalse(a.service.allowLogin("192.0.2.1").get());
+    skew.addAndGet(61_000);
+    assertTrue(a.service.allowLogin("192.0.2.1").get());
+  }
+
+  @Test
+  void loginRateLimitOffAllowsEverything() throws Exception {
+    FakeProxy a = rateProxy("a", false, 1);
+    for (int i = 0; i < 5; i++) {
+      assertTrue(a.service.allowLogin("192.0.2.1").get());
+    }
+  }
+
+  @Test
+  void loginRateLimitFailsOpenWhenTheStoreIsDown() throws Exception {
+    FakeProxy a = rateProxy("a", true, 1);
+    assertTrue(a.service.allowLogin("192.0.2.1").get());
+    store.setDown(true);
+    for (int i = 0; i < 3; i++) {
+      assertTrue(a.service.allowLogin("192.0.2.1").get());
+    }
+    store.setDown(false);
+  }
+
   @Test
   void secondLiveProxyWithSameIdRefusesToStart() {
     proxy("a");

@@ -273,3 +273,12 @@ drain-wait-for-save = false
 # Can be switched at runtime with /spaceport auth-outage on|off.
 auth-outage-mode = false
 auth-outage-window = 43200
+
+# Shared login rate limit (off by default), on top of the regular login-ratelimit: one address may
+# start at most login-rate-max logins per login-rate-window seconds, counted across all proxies of
+# the network. Meant against bots that spread over the proxies. The count lives in Redis; if Redis
+# is unreachable the limit is skipped and logins go through. Extra logins are refused with a
+# short message. Do not set it too low for players sharing one address (schools, NAT).
+login-rate-limit = false
+login-rate-max = 20
+login-rate-window = 60

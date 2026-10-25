@@ -55,6 +55,7 @@ public final class LocalStore implements NetworkStore {
   private final Map<String, Expiring> values = new HashMap<>();
   private final Map<UUID, Expiring> lastServers = new HashMap<>();
   private final Map<String, Long> nonces = new HashMap<>();
+  private final Map<String, long[]> rates = new HashMap<>();
   private final Map<UUID, CachedProfile> profiles = new HashMap<>();
   private final Map<String, UUID> profileNames = new HashMap<>();
   private final Map<String, List<Consumer<byte[]>>> handlers = new HashMap<>();
@@ -89,6 +90,7 @@ public final class LocalStore implements NetworkStore {
     values.clear();
     lastServers.clear();
     nonces.clear();
+    rates.clear();
     profiles.clear();
     profileNames.clear();
     generation = null;
@@ -270,6 +272,19 @@ public final class LocalStore implements NetworkStore {
       }
       nonces.put(nonce, now + ttlMillis);
       return true;
+    });
+  }
+
+  @Override
+  public CompletableFuture<Long> rateHit(String key, long windowMillis) {
+    return run(() -> {
+      long now = clock.getAsLong();
+      long[] w = rates.get(key); // {window end, hits}
+      if (w == null || w[0] <= now) {
+        w = new long[] {now + windowMillis, 0};
+        rates.put(key, w);
+      }
+      return ++w[1];
     });
   }
 

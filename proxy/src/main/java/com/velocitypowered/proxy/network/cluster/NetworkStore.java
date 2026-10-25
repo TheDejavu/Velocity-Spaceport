@@ -162,6 +162,16 @@ public interface NetworkStore extends AutoCloseable {
   CompletableFuture<Boolean> useNonce(String nonce, long ttlMillis);
 
   /**
+   * Counts one hit of a rate limit key in a fixed window: the window starts at the first hit and
+   * the count is dropped after {@code windowMillis}.
+   *
+   * @param key the key, e.g. the address
+   * @param windowMillis the window length
+   * @return the hits in the current window, this one included
+   */
+  CompletableFuture<Long> rateHit(String key, long windowMillis);
+
+  /**
    * Caches a player's profile for every proxy.
    *
    * @param profile the profile

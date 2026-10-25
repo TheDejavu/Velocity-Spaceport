@@ -119,7 +119,7 @@ class ProxyHealthTest {
   void metrics() throws Exception {
     health.markStarted();
     health.loginCompleted();
-    when(cluster.stats()).thenReturn(new ClusterService.Stats(3, 1, 0, 2, 150, 120, 9, 1, 0, 0, 0, 0));
+    when(cluster.stats()).thenReturn(new ClusterService.Stats(3, 1, 0, 2, 150, 120, 9, 1, 0, 0, 0, 0, 5));
     String body = get("/metrics").body();
     assertTrue(body.contains("spaceport_ready 1\n"), body);
     assertTrue(body.contains("spaceport_players_local 7\n"), body);

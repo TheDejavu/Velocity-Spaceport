@@ -97,6 +97,9 @@ public final class ClusterService implements AutoCloseable {
 
   public static final Component UNAVAILABLE = Component.text(
       "The network is unavailable right now, please try again in a moment.", NamedTextColor.RED);
+  public static final Component RATE_LIMITED = Component.text(
+      "Too many login attempts from your address, please wait a minute and try again.",
+      NamedTextColor.RED);
   static final Component ALREADY_CONNECTED =
       Component.translatable("velocity.error.already-connected-proxy", NamedTextColor.RED);
 
@@ -129,6 +132,7 @@ public final class ClusterService implements AutoCloseable {
   private final LongAdder claimsDenied = new LongAdder();
   private final LongAdder claimsUnavailable = new LongAdder();
   private final LongAdder storeErrors = new LongAdder();
+  private final LongAdder loginsLimited = new LongAdder();
   private volatile long tickMicros;
   private volatile long tickMicrosAvg;
   private long lastClash;
@@ -362,6 +366,33 @@ public final class ClusterService implements AutoCloseable {
     }
     new LoginClaim(record, properties, result).attempt();
     return result;
+  }
+
+  /**
+   * Shared login rate limit: counts a login attempt of an address across all proxies. Asks the
+   * store without blocking, and fails open: if the limit is off, the store is down or does not
+   * answer within a second, the login is allowed.
+   *
+   * @param ip the player's address
+   * @return true if the login may go on, false if the address is over the limit
+   */
+  public CompletableFuture<Boolean> allowLogin(String ip) {
+    if (!config.loginRateLimit() || storeDown) {
+      return CompletableFuture.completedFuture(true);
+    }
+    return store.rateHit(ip, config.loginRateWindow() * 1000L)
+        .orTimeout(1, TimeUnit.SECONDS)
+        .handle((hits, ex) -> {
+          if (ex != null) {
+            storeErrors.increment();
+            return true;
+          }
+          if (hits > config.loginRateMax()) {
+            loginsLimited.increment();
+            return false;
+          }
+          return true;
+        });
   }
 
   /**
@@ -924,7 +955,7 @@ public final class ClusterService implements AutoCloseable {
   public record Stats(long claimsOk, long claimsDenied, long claimsUnavailable, long storeErrors,
                       long tickMicros, long tickMicrosAvg, long busRequests, long busTimeouts,
                       long ticketsAccepted, long ticketsRejected, long authSkipped,
-                      long outageLogins) {
+                      long outageLogins, long loginsLimited) {
   }
 
   /**
@@ -935,7 +966,7 @@ public final class ClusterService implements AutoCloseable {
   public Stats stats() {
     return new Stats(claimsOk.sum(), claimsDenied.sum(), claimsUnavailable.sum(), storeErrors.sum(),
         tickMicros, tickMicrosAvg, bus.requests(), bus.timeouts(), ticketsAccepted.sum(),
-        ticketsRejected.sum(), authSkipped.sum(), outageLogins.sum());
+        ticketsRejected.sum(), authSkipped.sum(), outageLogins.sum(), loginsLimited.sum());
   }
 
   /**

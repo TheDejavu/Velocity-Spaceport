@@ -136,6 +136,33 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     inbound.setPlayerKey(playerKey);
     this.login = packet;
 
+    ClusterService cluster = server.getCluster();
+    if (cluster == null) {
+      firePreLogin();
+      return true;
+    }
+    // Spaceport: the shared per-address rate limit asks the store without blocking; the client
+    // waits for our answer, so nothing else can arrive meanwhile. It lets the login through if
+    // the store cannot answer.
+    String address = ((InetSocketAddress) mcConnection.getRemoteAddress()).getAddress()
+        .getHostAddress();
+    cluster.allowLogin(address).thenAcceptAsync(allowed -> {
+      if (mcConnection.isClosed()) {
+        return;
+      }
+      if (allowed) {
+        firePreLogin();
+      } else {
+        inbound.disconnect(ClusterService.RATE_LIMITED);
+      }
+    }, mcConnection.eventLoop()).exceptionally(ex -> {
+      logger.error("Exception in login rate limit stage", ex);
+      return null;
+    });
+    return true;
+  }
+
+  private void firePreLogin() {
     final PreLoginEvent event = new PreLoginEvent(inbound, login.getUsername(), login.getHolderUuid());
     server.getEventManager().fire(event).thenRunAsync(() -> {
       if (mcConnection.isClosed()) {
@@ -178,8 +205,6 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       logger.error("Exception in pre-login stage", ex);
       return null;
     });
-
-    return true;
   }
 
   @Override

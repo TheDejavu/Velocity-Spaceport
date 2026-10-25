@@ -316,6 +316,8 @@ public final class ProxyHealth implements AutoCloseable {
           cluster.authOutageMode() ? 1 : 0);
       counter(out, "spaceport_auth_outage_logins_total", "logins let in by outage mode",
           s.outageLogins());
+      counter(out, "spaceport_login_rate_limited_total",
+          "logins refused by the shared per-address rate limit", s.loginsLimited());
     }
     return out.toString();
   }

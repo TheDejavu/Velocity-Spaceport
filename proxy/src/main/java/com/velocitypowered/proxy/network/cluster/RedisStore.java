@@ -167,6 +167,13 @@ public final class RedisStore implements NetworkStore {
       return n
       """;
 
+  // KEYS: counter. ARGV: window (ms). Fixed window: the first hit starts it.
+  private static final String RATE = """
+      local n = redis.call('INCR', KEYS[1])
+      if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+      return n
+      """;
+
   private static final RedisCodec<String, byte[]> CODEC =
       RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE);
 
@@ -393,6 +400,12 @@ public final class RedisStore implements NetworkStore {
   public CompletableFuture<Boolean> useNonce(String nonce, long ttlMillis) {
     return call(redis -> redis.set(prefix + "nonce:" + nonce, "1",
         SetArgs.Builder.nx().px(ttlMillis))).thenApply("OK"::equals);
+  }
+
+  @Override
+  public CompletableFuture<Long> rateHit(String key, long windowMillis) {
+    return call(redis -> redis.<Long>eval(RATE, ScriptOutputType.INTEGER,
+        new String[] {prefix + "rl:ip:" + key}, Long.toString(windowMillis)));
   }
 
   @Override

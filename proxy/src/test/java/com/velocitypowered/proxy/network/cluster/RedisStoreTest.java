@@ -223,4 +223,13 @@ class RedisStoreTest {
     return String.format("n=%d p50=%.3fms p99=%.3fms max=%.3fms", s.length,
         s[s.length / 2] / 1e6, s[(int) (s.length * 0.99)] / 1e6, s[s.length - 1] / 1e6);
   }
+
+  @Test
+  void rateHitCountsInAFixedWindow() throws Exception {
+    assertEquals(1, store.rateHit("192.0.2.1", 300).get(5, TimeUnit.SECONDS));
+    assertEquals(2, store.rateHit("192.0.2.1", 300).get(5, TimeUnit.SECONDS));
+    assertEquals(1, store.rateHit("192.0.2.2", 300).get(5, TimeUnit.SECONDS));
+    Thread.sleep(400);
+    assertEquals(1, store.rateHit("192.0.2.1", 300).get(5, TimeUnit.SECONDS));
+  }
 }
