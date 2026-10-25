@@ -167,10 +167,13 @@ public final class RedisStore implements NetworkStore {
       return n
       """;
 
-  // KEYS: counter. ARGV: window (ms). Fixed window: the first hit starts it.
+  // KEYS: counter. ARGV: window (ms). Fixed window: the first hit starts it; a counter
+  // left without a TTL (lost expire) gets one.
   private static final String RATE = """
       local n = redis.call('INCR', KEYS[1])
-      if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+      if n == 1 or redis.call('PTTL', KEYS[1]) == -1 then
+        redis.call('PEXPIRE', KEYS[1], ARGV[1])
+      end
       return n
       """;
 
