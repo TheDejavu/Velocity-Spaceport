@@ -519,4 +519,41 @@ class ClusterServiceTest {
     long before = System.currentTimeMillis();
     assertTrue(proxy("a").service.epoch() >= before);
   }
+
+  @Test
+  void serverNamesWithEqualsSignsKeepTheirCount() throws Exception {
+    final FakeProxy a = proxy("a");
+    final FakeProxy b = proxy("b");
+    a.servers.put("odd=name", 4);
+    await(() -> b.service.remotePlayerCount("odd=name") == 4);
+    assertTrue(b.service.liveRemotes().get(0).servers().contains("odd=name"));
+  }
+
+  @Test
+  void olderLoginsQuitDoesNotOverwriteNewerLastSeen() throws Exception {
+    final FakeProxy a = proxy("a");
+    UUID steve = UUID.randomUUID();
+    String sep = String.valueOf((char) 9);
+    long newer = System.currentTimeMillis() + 60_000;
+    store.put("seen:" + steve, String.join(sep, "Steve", "z", "later", "5", Long.toString(newer)),
+        86_400_000L).join();
+    LoginResult r = a.login(steve, "Steve");
+    a.service.serverChanged(steve, r.session(), "lobby");
+    a.disconnectDuplicate(steve);
+    Thread.sleep(300);
+    var seen = a.service.lastSeen(steve).join().orElseThrow();
+    assertEquals("z", seen.getProxyId());
+    assertEquals(Optional.of("later"), seen.getServerName());
+  }
+
+  @Test
+  void loginThatNeverReachedServerLeavesNoLastSeen() throws Exception {
+    final FakeProxy a = proxy("a");
+    UUID steve = UUID.randomUUID();
+    a.login(steve, "Steve");
+    a.disconnectDuplicate(steve); // aborted before any server
+    Thread.sleep(300);
+    assertEquals(Optional.empty(), a.service.lastSeen(steve).join());
+    assertEquals(Optional.empty(), a.service.seenUuid("Steve").join());
+  }
 }

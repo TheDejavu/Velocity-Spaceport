@@ -358,7 +358,7 @@ public final class ClusterService implements AutoCloseable {
       List<String> names = new ArrayList<>(p.servers().size());
       Map<String, Integer> perServer = new HashMap<>();
       for (String entry : p.servers()) {
-        int eq = entry.indexOf('=');
+        int eq = entry.lastIndexOf('='); // the count is numeric, the name may hold '='
         String name = eq < 0 ? entry : entry.substring(0, eq);
         names.add(name);
         perServer.put(name, eq < 0 ? 1 : parseCount(entry.substring(eq + 1)));
@@ -607,15 +607,31 @@ public final class ClusterService implements AutoCloseable {
   }
 
   private void recordSeen(PlayerRecord r) {
-    if (config.lastSeenTtl() <= 0) {
+    // A player that never reached a backend server was not really seen.
+    if (config.lastSeenTtl() <= 0 || r.server() == null) {
       return;
     }
     long ttl = config.lastSeenTtl() * 86_400_000L;
-    store.put("seen:" + r.uuid(), r.name() + SEEN_SEP + r.proxy() + SEEN_SEP
-        + (r.server() == null ? "" : r.server()) + SEEN_SEP + System.currentTimeMillis(), ttl)
-        .exceptionally(ex -> null);
-    store.put("seenname:" + r.name().toLowerCase(Locale.ROOT), r.uuid().toString(), ttl)
-        .exceptionally(ex -> null);
+    // Not atomic, but a quit of an older login only skips the write when it sees a newer record.
+    store.get("seen:" + r.uuid()).thenCompose(old -> {
+      if (old.map(v -> loginOf(v) > r.since()).orElse(false)) {
+        return CompletableFuture.<Void>completedFuture(null);
+      }
+      return store.put("seen:" + r.uuid(), r.name() + SEEN_SEP + r.proxy() + SEEN_SEP
+          + r.server() + SEEN_SEP + System.currentTimeMillis() + SEEN_SEP + r.since(), ttl)
+          .thenCompose(v -> store.put("seenname:" + r.name().toLowerCase(Locale.ROOT),
+              r.uuid().toString(), ttl));
+    }).exceptionally(ex -> null);
+  }
+
+  /** The login time stored in a last-seen record, 0 if it has none. */
+  private static long loginOf(String value) {
+    String[] f = value.split(SEEN_SEP, -1);
+    try {
+      return f.length == 5 ? Long.parseLong(f[4]) : 0;
+    } catch (NumberFormatException e) {
+      return 0;
+    }
   }
 
   /**
@@ -627,7 +643,7 @@ public final class ClusterService implements AutoCloseable {
   public CompletableFuture<Optional<LastSeen>> lastSeen(UUID uuid) {
     return store.get("seen:" + uuid).thenApply(value -> value.flatMap(v -> {
       String[] f = v.split(SEEN_SEP, -1);
-      if (f.length != 4) {
+      if (f.length != 4 && f.length != 5) {
         return Optional.empty();
       }
       try {
