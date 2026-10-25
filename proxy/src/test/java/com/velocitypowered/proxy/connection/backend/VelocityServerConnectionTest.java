@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-
 package com.velocitypowered.proxy.connection.backend;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
