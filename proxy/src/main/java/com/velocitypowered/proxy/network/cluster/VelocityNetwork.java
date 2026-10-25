@@ -122,6 +122,13 @@ public final class VelocityNetwork implements Network {
   }
 
   @Override
+  public int getPlayerCount(String serverName) {
+    int local = server.getServer(serverName).map(RegisteredServer::getPlayersConnected)
+        .map(Collection::size).orElse(0);
+    return cluster == null ? local : local + cluster.remotePlayerCount(serverName);
+  }
+
+  @Override
   public Collection<ProxyNode> getProxies() {
     List<ProxyNode> nodes = new ArrayList<>();
     nodes.add(new Node(getProxyId(), server.getPlayerCount(), server.getHealth().isDraining()));
@@ -165,6 +172,17 @@ public final class VelocityNetwork implements Network {
       records.forEach(r -> players.add(wrap(r)));
       return players;
     });
+  }
+
+  @Override
+  public CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName) {
+    if (remote == null) {
+      List<NetworkPlayer> players = new ArrayList<>();
+      server.getServer(serverName).ifPresent(rs -> rs.getPlayersConnected()
+          .forEach(p -> players.add(local(p))));
+      return CompletableFuture.completedFuture(players);
+    }
+    return remote.playersOnServer(serverName).thenApply(this::wrapAll);
   }
 
   @Override
@@ -214,13 +232,6 @@ public final class VelocityNetwork implements Network {
   }
 
   @Override
-  public int getPlayerCount(String serverName) {
-    int local = server.getServer(serverName).map(RegisteredServer::getPlayersConnected)
-        .map(Collection::size).orElse(0);
-    return cluster == null ? local : local + cluster.remotePlayerCount(serverName);
-  }
-
-  @Override
   public int getPlayerCountOnProxy(String proxyId) {
     return getProxy(proxyId).map(ProxyNode::getPlayerCount).orElse(0);
   }
@@ -228,17 +239,6 @@ public final class VelocityNetwork implements Network {
   @Override
   public Optional<ProxyNode> getProxy(String proxyId) {
     return getProxies().stream().filter(p -> p.getId().equals(proxyId)).findFirst();
-  }
-
-  @Override
-  public CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName) {
-    if (remote == null) {
-      List<NetworkPlayer> players = new ArrayList<>();
-      server.getServer(serverName).ifPresent(rs -> rs.getPlayersConnected()
-          .forEach(p -> players.add(local(p))));
-      return CompletableFuture.completedFuture(players);
-    }
-    return remote.playersOnServer(serverName).thenApply(this::wrapAll);
   }
 
   @Override

@@ -166,14 +166,14 @@ class PluginMessengerTest {
 
   @Test
   void broadcastGoesToOtherProxiesOnly() throws Exception {
-    PluginMessenger a = proxy("a");
-    PluginMessenger b = proxy("b");
-    PluginMessenger c = proxy("c");
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
+    final PluginMessenger c = proxy("c");
     proxy("d"); // no listener
     meet(4);
-    AtomicInteger atA = new AtomicInteger();
-    AtomicInteger atB = new AtomicInteger();
-    AtomicInteger atC = new AtomicInteger();
+    final AtomicInteger atA = new AtomicInteger();
+    final AtomicInteger atB = new AtomicInteger();
+    final AtomicInteger atC = new AtomicInteger();
     a.registerListener(plugin, CHANNEL, (ch, from, p) -> atA.incrementAndGet());
     b.registerListener(plugin, CHANNEL, (ch, from, p) -> atB.incrementAndGet());
     c.registerListener(plugin, CHANNEL, (ch, from, p) -> atC.incrementAndGet());
@@ -187,8 +187,8 @@ class PluginMessengerTest {
 
   @Test
   void requestGetsTheHandlersAnswer() throws Exception {
-    PluginMessenger a = proxy("a");
-    PluginMessenger b = proxy("b");
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
     meet(2);
     b.registerRequestHandler(plugin, CHANNEL, (channel, from, payload) ->
         bytes(from + ":" + new String(payload, StandardCharsets.UTF_8).toUpperCase()));
@@ -198,8 +198,8 @@ class PluginMessengerTest {
 
   @Test
   void requestFailuresAreDistinct() throws Exception {
-    PluginMessenger a = proxy("a");
-    PluginMessenger b = proxy("b");
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
     meet(2);
     Key slow = Key.key("test", "slow");
     Key broken = Key.key("test", "broken");
@@ -230,8 +230,8 @@ class PluginMessengerTest {
 
   @Test
   void limitsAreEnforced() throws Exception {
-    PluginMessenger a = proxy("a");
-    PluginMessenger b = proxy("b");
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
     meet(2);
     byte[] big = new byte[NetworkMessenger.MAX_PAYLOAD_BYTES + 1];
     assertThrows(IllegalArgumentException.class, () -> a.send(CHANNEL, "b", big));
@@ -253,8 +253,8 @@ class PluginMessengerTest {
 
   @Test
   void unregisteringStopsDeliveryAndSurvivesFailingListeners() throws Exception {
-    PluginMessenger a = proxy("a");
-    PluginMessenger b = proxy("b");
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
     meet(2);
     Object other = new Object();
     AtomicInteger mine = new AtomicInteger();
@@ -286,7 +286,7 @@ class PluginMessengerTest {
   }
 
   @Test
-  void worksOnThisProxyWithoutANetwork() throws Exception {
+  void worksOnThisProxyWithoutNetwork() throws Exception {
     PluginMessenger alone = new PluginMessenger(null, null);
     AtomicInteger got = new AtomicInteger();
     alone.registerListener(plugin, CHANNEL, (ch, from, p) -> got.incrementAndGet());

@@ -573,6 +573,9 @@ public final class ClusterService implements AutoCloseable {
     host.fire(new NetworkPlayerQuitEvent(new VelocityNetworkPlayer(r, actions)));
   }
 
+  /** Separates the fields of a last-seen record (a tab, which no name or server contains). */
+  private static final String SEEN_SEP = String.valueOf((char) 9);
+
   /** Days the last-seen records live, 0 for none. */
   public int lastSeenDays() {
     return config.lastSeenTtl();
@@ -583,8 +586,8 @@ public final class ClusterService implements AutoCloseable {
       return;
     }
     long ttl = config.lastSeenTtl() * 86_400_000L;
-    store.put("seen:" + r.uuid(), r.name() + "	" + r.proxy() + "	"
-        + (r.server() == null ? "" : r.server()) + "	" + System.currentTimeMillis(), ttl)
+    store.put("seen:" + r.uuid(), r.name() + SEEN_SEP + r.proxy() + SEEN_SEP
+        + (r.server() == null ? "" : r.server()) + SEEN_SEP + System.currentTimeMillis(), ttl)
         .exceptionally(ex -> null);
     store.put("seenname:" + r.name().toLowerCase(Locale.ROOT), r.uuid().toString(), ttl)
         .exceptionally(ex -> null);
@@ -598,7 +601,7 @@ public final class ClusterService implements AutoCloseable {
    */
   public CompletableFuture<Optional<LastSeen>> lastSeen(UUID uuid) {
     return store.get("seen:" + uuid).thenApply(value -> value.flatMap(v -> {
-      String[] f = v.split("	", -1);
+      String[] f = v.split(SEEN_SEP, -1);
       if (f.length != 4) {
         return Optional.empty();
       }

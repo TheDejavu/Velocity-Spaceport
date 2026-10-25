@@ -210,9 +210,9 @@ class ClusterServiceTest {
 
   @Test
   void serverCountsReachOtherProxies() throws Exception {
-    FakeProxy a = proxy("a");
-    FakeProxy b = proxy("b");
-    FakeProxy c = proxy("c");
+    final FakeProxy a = proxy("a");
+    final FakeProxy b = proxy("b");
+    final FakeProxy c = proxy("c");
     a.servers.put("lobby", 3);
     a.servers.put("survival", 1);
     b.servers.put("lobby", 2);
@@ -229,8 +229,8 @@ class ClusterServiceTest {
 
   @Test
   void networkEventsFireOnceEverywhere() throws Exception {
-    FakeProxy a = proxy("a");
-    FakeProxy b = proxy("b");
+    final FakeProxy a = proxy("a");
+    final FakeProxy b = proxy("b");
     UUID steve = UUID.randomUUID();
     LoginResult r = a.login(steve, "Steve");
     a.service.serverChanged(steve, r.session(), "lobby");

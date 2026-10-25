@@ -242,7 +242,7 @@ class VelocityNetworkTest {
     assertEquals(Optional.of("lobby"), online.getServerName());
 
     b.quit(steve);
-    long before = System.currentTimeMillis();
+    final long before = System.currentTimeMillis();
     var seen = a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS).orElseThrow();
     assertFalse(seen.isOnline());
     assertEquals("Steve", seen.getUsername());

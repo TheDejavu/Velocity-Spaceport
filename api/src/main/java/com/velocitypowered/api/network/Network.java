@@ -43,6 +43,17 @@ public interface Network {
   int getPlayerCount();
 
   /**
+   * Returns the number of players on a backend server across the whole network. Like
+   * {@link #getPlayerCount()} it is cached, refreshed several times a second, and never waits on
+   * the network store.
+   *
+   * @param serverName the backend server's name, ignoring case
+   * @return the players on that server on all proxies, 0 for an unknown server
+   * @since 4.3.1
+   */
+  int getPlayerCount(String serverName);
+
+  /**
    * Returns the live proxies of the network, as last seen.
    *
    * @return the proxies, including this one
@@ -72,6 +83,16 @@ public interface Network {
    * @return the players
    */
   CompletableFuture<Collection<NetworkPlayer>> getPlayers();
+
+  /**
+   * Lists the players on a backend server across the network. Only the proxies that have players
+   * on that server are asked; one that does not answer in time is missing.
+   *
+   * @param serverName the backend server's name, ignoring case
+   * @return the players on it
+   * @since 4.3.1
+   */
+  CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName);
 
   /**
    * Sends a chat message to every player on the network.
@@ -129,17 +150,6 @@ public interface Network {
   CompletableFuture<Optional<GameProfile>> getCachedProfile(String username);
 
   /**
-   * Returns the number of players on a backend server across the whole network. Like
-   * {@link #getPlayerCount()} it is cached, refreshed several times a second, and never waits on
-   * the network store.
-   *
-   * @param serverName the backend server's name, ignoring case
-   * @return the players on that server on all proxies, 0 for an unknown server
-   * @since 4.3.1
-   */
-  int getPlayerCount(String serverName);
-
-  /**
    * Returns the number of players on one proxy, as last reported.
    *
    * @param proxyId the proxy's id
@@ -156,16 +166,6 @@ public interface Network {
    * @since 4.3.1
    */
   Optional<ProxyNode> getProxy(String proxyId);
-
-  /**
-   * Lists the players on a backend server across the network. Only the proxies that have players
-   * on that server are asked; one that does not answer in time is missing.
-   *
-   * @param serverName the backend server's name, ignoring case
-   * @return the players on it
-   * @since 4.3.1
-   */
-  CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName);
 
   /**
    * Lists the players of one proxy.
