@@ -26,9 +26,11 @@ import static org.mockito.Mockito.when;
 
 import com.velocitypowered.api.network.NetworkPlayer;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import com.velocitypowered.proxy.VelocityServer;
+import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
@@ -45,6 +47,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -58,7 +61,9 @@ class VelocityNetworkTest {
   @TempDir
   static Path keyDir;
 
-  private final LocalStore store = new LocalStore();
+  private final AtomicLong skew = new AtomicLong();
+  private final LocalStore store = new LocalStore(() -> System.currentTimeMillis() + skew.get());
+  private int lastSeenDays = 30;
   private final List<ClusterService> services = new ArrayList<>();
 
   /** One proxy of the test network. */
@@ -73,7 +78,7 @@ class VelocityNetworkTest {
     Node(String id, boolean enabled) {
       NetworkConfig config = new NetworkConfig(true, id, "", "", "local", "newest-wins",
           "stop-logins", "", 5, 120, "", 25565, 50,
-          keyDir.resolve("network-secret.key").toString(), true, 21600, 300, false, false, 43200);
+          keyDir.resolve("network-secret.key").toString(), true, 21600, 300, false, false, 43200, false, 20, 60, lastSeenDays);
       cluster = new ClusterService(config, id, store, this);
       when(server.getAllPlayers()).thenAnswer(i -> List.copyOf(players));
       when(server.getHealth()).thenReturn(mock(ProxyHealth.class));
@@ -224,5 +229,69 @@ class VelocityNetworkTest {
     assertEquals(Optional.empty(), a.network.getUniqueId("x").get(5, TimeUnit.SECONDS));
     assertEquals(Optional.empty(), a.network.getUsername(UUID.randomUUID()).get(5,
         TimeUnit.SECONDS));
+  }
+
+  @Test
+  void lastSeenIsKeptAfterQuitAndExpires() throws Exception {
+    Node a = new Node("a", true);
+    Node b = new Node("b", true);
+    UUID steve = b.join("Steve", "lobby");
+    var online = a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS).orElseThrow();
+    assertTrue(online.isOnline());
+    assertEquals("b", online.getProxyId());
+    assertEquals(Optional.of("lobby"), online.getServerName());
+
+    b.quit(steve);
+    long before = System.currentTimeMillis();
+    var seen = a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS).orElseThrow();
+    assertFalse(seen.isOnline());
+    assertEquals("Steve", seen.getUsername());
+    assertEquals("b", seen.getProxyId());
+    assertEquals(Optional.of("lobby"), seen.getServerName());
+    assertTrue(Math.abs(seen.getTime().toEpochMilli() - before) < 5_000);
+    assertEquals(Optional.of("lobby"), a.network.getLastServer(steve).get(5, TimeUnit.SECONDS));
+    assertEquals(steve, a.network.getLastSeen("STEVE").get(5, TimeUnit.SECONDS).orElseThrow()
+        .getUniqueId());
+
+    // the profile cache forgets after its 6 hours, the last-seen record still knows the name
+    skew.addAndGet(7 * 3_600_000L);
+    assertEquals(Optional.of(steve), a.network.getUniqueId("steve").get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.of("Steve"), a.network.getUsername(steve).get(5, TimeUnit.SECONDS));
+
+    skew.addAndGet(31 * 86_400_000L);
+    assertEquals(Optional.empty(), a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.empty(), a.network.getUniqueId("steve").get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.empty(), a.network.getLastServer(steve).get(5, TimeUnit.SECONDS));
+  }
+
+  @Test
+  void lastSeenOffWithZeroDays() throws Exception {
+    lastSeenDays = 0;
+    Node a = new Node("a", true);
+    UUID steve = a.join("Steve", "lobby");
+    a.quit(steve);
+    assertEquals(Optional.empty(), a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS));
+  }
+
+  @Test
+  void lastSeenWithoutNetworkIsKeptInMemory() throws Exception {
+    Node a = new Node("a", false);
+    VelocityConfiguration configuration = mock(VelocityConfiguration.class);
+    when(configuration.getNetworkConfig()).thenReturn(NetworkConfig.DEFAULT);
+    when(a.server.getConfiguration()).thenReturn(configuration);
+    UUID steve = UUID.randomUUID();
+    Player gone = mock(Player.class);
+    when(gone.getUniqueId()).thenReturn(steve);
+    when(gone.getUsername()).thenReturn("Steve");
+    ServerConnection connection = mock(ServerConnection.class);
+    when(connection.getServerInfo()).thenReturn(new ServerInfo("lobby",
+        new InetSocketAddress("127.0.0.1", 25566)));
+    when(gone.getCurrentServer()).thenReturn(Optional.of(connection));
+    a.network.recordQuit(gone);
+    var seen = a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS).orElseThrow();
+    assertEquals("local", seen.getProxyId());
+    assertEquals(Optional.of("lobby"), seen.getServerName());
+    assertEquals(Optional.of(steve), a.network.getUniqueId("STEVE").get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.of("Steve"), a.network.getUsername(steve).get(5, TimeUnit.SECONDS));
   }
 }

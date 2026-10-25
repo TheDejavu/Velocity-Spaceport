@@ -58,6 +58,7 @@ public final class LocalStore implements NetworkStore {
   private final Map<String, long[]> rates = new HashMap<>();
   private final Map<UUID, CachedProfile> profiles = new HashMap<>();
   private final Map<String, UUID> profileNames = new HashMap<>();
+  private final Map<UUID, Long> profileExpires = new HashMap<>();
   private final Map<String, List<Consumer<byte[]>>> handlers = new HashMap<>();
   private String generation;
   private long epoch;
@@ -93,6 +94,7 @@ public final class LocalStore implements NetworkStore {
     rates.clear();
     profiles.clear();
     profileNames.clear();
+    profileExpires.clear();
     generation = null;
     epoch = 0;
   }
@@ -292,6 +294,7 @@ public final class LocalStore implements NetworkStore {
   public CompletableFuture<Void> putProfile(CachedProfile profile, long ttlMillis) {
     return run(() -> {
       profiles.put(profile.uuid(), profile);
+      profileExpires.put(profile.uuid(), clock.getAsLong() + ttlMillis);
       profileNames.put(profile.name().toLowerCase(Locale.ROOT), profile.uuid());
       return null;
     });
@@ -299,7 +302,8 @@ public final class LocalStore implements NetworkStore {
 
   @Override
   public CompletableFuture<Optional<CachedProfile>> profile(UUID player) {
-    return run(() -> Optional.ofNullable(profiles.get(player)));
+    return run(() -> Optional.ofNullable(profiles.get(player))
+        .filter(p -> profileExpires.get(player) > clock.getAsLong()));
   }
 
   @Override
@@ -322,7 +326,7 @@ public final class LocalStore implements NetworkStore {
   @Override
   public CompletableFuture<Optional<CachedProfile>> profileByName(String name) {
     return run(() -> Optional.ofNullable(profileNames.get(name.toLowerCase(Locale.ROOT)))
-        .map(profiles::get));
+        .map(profiles::get).filter(p -> profileExpires.get(p.uuid()) > clock.getAsLong()));
   }
 
   @Override

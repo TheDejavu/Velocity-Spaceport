@@ -17,6 +17,9 @@
 
 package com.velocitypowered.proxy.network.cluster;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.velocitypowered.api.network.LastSeen;
 import com.velocitypowered.api.network.Network;
 import com.velocitypowered.api.network.NetworkPlayer;
 import com.velocitypowered.api.network.ProxyNode;
@@ -27,9 +30,11 @@ import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.PlayerRecord;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.ProxyState;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -48,6 +53,9 @@ public final class VelocityNetwork implements Network {
   private final @Nullable ClusterService cluster;
   private final @Nullable NetworkActions remote;
   private final VelocityNetworkPlayer.Actions actions;
+  /** Players that left, kept in memory when there is no network (bounded). */
+  private final Cache<UUID, LastSeen> seen = Caffeine.newBuilder().maximumSize(50_000).build();
+  private final Cache<String, UUID> seenNames = Caffeine.newBuilder().maximumSize(50_000).build();
 
   /**
    * Creates the network view.
@@ -243,25 +251,92 @@ public final class VelocityNetwork implements Network {
   @Override
   public CompletableFuture<Optional<UUID>> getUniqueId(String username) {
     Optional<Player> online = server.getPlayer(username);
-    if (online.isPresent() || cluster == null) {
+    if (online.isPresent()) {
       return CompletableFuture.completedFuture(online.map(Player::getUniqueId));
+    }
+    if (cluster == null) {
+      return CompletableFuture.completedFuture(Optional.ofNullable(
+          seenNames.getIfPresent(username.toLowerCase(Locale.ROOT))));
     }
     NetworkStore store = cluster.store();
     return store.uuidOf(username).thenCompose(id -> id.isPresent()
         ? CompletableFuture.completedFuture(id)
-        : store.profileByName(username).thenApply(p -> p.map(NetworkStore.CachedProfile::uuid)));
+        : store.profileByName(username).thenCompose(p -> p.isPresent()
+            ? CompletableFuture.completedFuture(p.map(NetworkStore.CachedProfile::uuid))
+            : cluster.seenUuid(username)));
   }
 
   @Override
   public CompletableFuture<Optional<String>> getUsername(UUID uuid) {
     Optional<Player> online = server.getPlayer(uuid);
-    if (online.isPresent() || cluster == null) {
+    if (online.isPresent()) {
       return CompletableFuture.completedFuture(online.map(Player::getUsername));
+    }
+    if (cluster == null) {
+      return CompletableFuture.completedFuture(Optional.ofNullable(seen.getIfPresent(uuid))
+          .map(LastSeen::getUsername));
     }
     NetworkStore store = cluster.store();
     return store.player(uuid).thenCompose(r -> r.isPresent()
         ? CompletableFuture.completedFuture(r.map(PlayerRecord::name))
-        : store.profile(uuid).thenApply(p -> p.map(NetworkStore.CachedProfile::name)));
+        : store.profile(uuid).thenCompose(p -> p.isPresent()
+            ? CompletableFuture.completedFuture(p.map(NetworkStore.CachedProfile::name))
+            : cluster.lastSeen(uuid).thenApply(l -> l.map(LastSeen::getUsername))));
+  }
+
+  @Override
+  public CompletableFuture<Optional<LastSeen>> getLastSeen(UUID uuid) {
+    Optional<Player> online = server.getPlayer(uuid);
+    if (online.isPresent()) {
+      NetworkPlayer p = local(online.get());
+      return CompletableFuture.completedFuture(Optional.of(now(p)));
+    }
+    if (cluster == null) {
+      LastSeen last = seen.getIfPresent(uuid);
+      long ttl = seenTtlMillis();
+      return CompletableFuture.completedFuture(last == null || ttl <= 0
+          || last.getTime().toEpochMilli() + ttl < System.currentTimeMillis()
+          ? Optional.empty() : Optional.of(last));
+    }
+    return cluster.store().player(uuid).thenCompose(r -> r.isPresent()
+        ? CompletableFuture.completedFuture(Optional.of(now(wrap(r.get()))))
+        : cluster.lastSeen(uuid));
+  }
+
+  @Override
+  public CompletableFuture<Optional<LastSeen>> getLastSeen(String username) {
+    return getUniqueId(username).thenCompose(id -> id.isEmpty()
+        ? CompletableFuture.completedFuture(Optional.<LastSeen>empty()) : getLastSeen(id.get()));
+  }
+
+  @Override
+  public CompletableFuture<Optional<String>> getLastServer(UUID uuid) {
+    return getLastSeen(uuid).thenApply(l -> l.flatMap(LastSeen::getServerName));
+  }
+
+  private static LastSeen now(NetworkPlayer p) {
+    return new LastSeen(p.getUniqueId(), p.getUsername(), p.getProxyId(),
+        p.getServerName().orElse(null), Instant.now(), true);
+  }
+
+  private long seenTtlMillis() {
+    return server.getConfiguration().getNetworkConfig().lastSeenTtl() * 86_400_000L;
+  }
+
+  /**
+   * Remembers a local player that left, when there is no network to keep the record.
+   *
+   * @param player the player
+   */
+  public void recordQuit(Player player) {
+    if (cluster != null || seenTtlMillis() <= 0) {
+      return;
+    }
+    LastSeen last = new LastSeen(player.getUniqueId(), player.getUsername(), getProxyId(),
+        player.getCurrentServer().map(c -> c.getServerInfo().getName()).orElse(null),
+        Instant.now(), false);
+    seen.put(player.getUniqueId(), last);
+    seenNames.put(player.getUsername().toLowerCase(Locale.ROOT), player.getUniqueId());
   }
 
   private static GameProfile toProfile(NetworkStore.CachedProfile p) {

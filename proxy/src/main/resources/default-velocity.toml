@@ -261,6 +261,10 @@ skip-auth-with-ticket = true
 # Seconds a player's profile (name, uuid, skin) stays in the shared cache.
 profile-cache-ttl = 21600
 
+# Days a player's last-seen record (last proxy, last server, time of leaving) is kept after it
+# leaves, for plugins (Network#getLastSeen). Shared by all proxies of the network. 0 keeps none.
+last-seen-ttl = 30
+
 # Seconds during which players of a crashed proxy are sent back to the server they were on.
 last-server-ttl = 300
 

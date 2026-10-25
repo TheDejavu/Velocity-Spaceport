@@ -214,4 +214,35 @@ public interface Network {
    * @since 4.3.1
    */
   CompletableFuture<Optional<String>> getUsername(UUID uuid);
+
+  /**
+   * Looks up where and when a player was last on the network. For a player that is online it
+   * answers with the current proxy and server and the current time. Records are written when a
+   * player leaves, shared by all proxies and kept for {@code last-seen-ttl} days (0 turns them
+   * off); without a network they are kept in memory on this proxy only.
+   *
+   * @param uuid the player's uuid
+   * @return the record, if the player is online or was seen within the retention time
+   * @since 4.3.1
+   */
+  CompletableFuture<Optional<LastSeen>> getLastSeen(UUID uuid);
+
+  /**
+   * Looks up where and when a player was last on the network, by name, ignoring case.
+   *
+   * @param username the player's name
+   * @return the record, if the player is online or was seen within the retention time
+   * @see #getLastSeen(UUID)
+   * @since 4.3.1
+   */
+  CompletableFuture<Optional<LastSeen>> getLastSeen(String username);
+
+  /**
+   * Returns the backend server a player is on, or was on when it last left.
+   *
+   * @param uuid the player's uuid
+   * @return the server name, if known
+   * @since 4.3.1
+   */
+  CompletableFuture<Optional<String>> getLastServer(UUID uuid);
 }

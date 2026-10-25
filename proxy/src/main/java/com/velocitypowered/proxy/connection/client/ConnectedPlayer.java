@@ -961,6 +961,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     ClusterService cluster = server.getCluster();
     if (cluster != null && networkSession != 0) {
       cluster.playerLeft(getUniqueId(), networkSession);
+    } else if (cluster == null && connectedPlayer.isPresent() && connectedPlayer.get() == this) {
+      server.getNetwork().recordQuit(this);
     }
 
     DisconnectEvent.LoginStatus status;

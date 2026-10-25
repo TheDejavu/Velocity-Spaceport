@@ -22,6 +22,7 @@ import static com.velocitypowered.proxy.VelocityServer.GENERAL_GSON;
 import com.velocitypowered.api.event.network.NetworkPlayerJoinEvent;
 import com.velocitypowered.api.event.network.NetworkPlayerQuitEvent;
 import com.velocitypowered.api.event.network.NetworkPlayerServerChangeEvent;
+import com.velocitypowered.api.network.LastSeen;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.NetworkStore.Claim;
@@ -35,6 +36,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -566,8 +568,58 @@ public final class ClusterService implements AutoCloseable {
     }
     release(uuid, session, 0);
     PlayerRecord r = s.current();
+    recordSeen(r);
     publish("msg:all", frame(QUIT, uuid, r.name(), r.server(), null, r.since()));
     host.fire(new NetworkPlayerQuitEvent(new VelocityNetworkPlayer(r, actions)));
+  }
+
+  /** Days the last-seen records live, 0 for none. */
+  public int lastSeenDays() {
+    return config.lastSeenTtl();
+  }
+
+  private void recordSeen(PlayerRecord r) {
+    if (config.lastSeenTtl() <= 0) {
+      return;
+    }
+    long ttl = config.lastSeenTtl() * 86_400_000L;
+    store.put("seen:" + r.uuid(), r.name() + "	" + r.proxy() + "	"
+        + (r.server() == null ? "" : r.server()) + "	" + System.currentTimeMillis(), ttl)
+        .exceptionally(ex -> null);
+    store.put("seenname:" + r.name().toLowerCase(Locale.ROOT), r.uuid().toString(), ttl)
+        .exceptionally(ex -> null);
+  }
+
+  /**
+   * Reads the record written when a player last left.
+   *
+   * @param uuid the player
+   * @return the record (never marked online), or empty
+   */
+  public CompletableFuture<Optional<LastSeen>> lastSeen(UUID uuid) {
+    return store.get("seen:" + uuid).thenApply(value -> value.flatMap(v -> {
+      String[] f = v.split("	", -1);
+      if (f.length != 4) {
+        return Optional.empty();
+      }
+      try {
+        return Optional.of(new LastSeen(uuid, f[0], f[1], f[2].isEmpty() ? null : f[2],
+            Instant.ofEpochMilli(Long.parseLong(f[3])), false));
+      } catch (NumberFormatException e) {
+        return Optional.empty();
+      }
+    }));
+  }
+
+  /**
+   * Finds a player that left within the retention time by name.
+   *
+   * @param name the player's name, ignoring case
+   * @return its uuid, or empty
+   */
+  public CompletableFuture<Optional<UUID>> seenUuid(String name) {
+    return store.get("seenname:" + name.toLowerCase(Locale.ROOT))
+        .thenApply(v -> v.map(UUID::fromString));
   }
 
   private void release(UUID uuid, long session, int attempt) {

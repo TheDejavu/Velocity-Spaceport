@@ -1071,6 +1071,8 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param loginRateLimit whether logins per address are limited across all proxies
    * @param loginRateMax logins one address may start per window, network-wide
    * @param loginRateWindow length of that window in seconds
+   * @param lastSeenTtl days a player's last-seen record (last proxy, server, time) is kept after
+   *     it leaves, 0 to keep none
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
@@ -1079,10 +1081,11 @@ public class VelocityConfiguration implements ProxyConfig {
                               String transferSecretFile, boolean skipAuthWithTicket,
                               int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave,
                               boolean authOutageMode, int authOutageWindow,
-                              boolean loginRateLimit, int loginRateMax, int loginRateWindow) {
+                              boolean loginRateLimit, int loginRateMax, int loginRateWindow,
+                              int lastSeenTtl) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
         "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50,
-        "network-secret.key", true, 21600, 300, false, false, 43200, false, 20, 60);
+        "network-secret.key", true, 21600, 300, false, false, 43200, false, 20, 60, 30);
 
     /** Without the login rate limit settings (off). */
     public NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
@@ -1094,7 +1097,22 @@ public class VelocityConfiguration implements ProxyConfig {
       this(enabled, proxyId, redisUri, keyPrefix, store, duplicateLogin, redisDownPolicy,
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
-          drainWaitForSave, authOutageMode, authOutageWindow, false, 20, 60);
+          drainWaitForSave, authOutageMode, authOutageWindow, false, 20, 60, 30);
+    }
+
+    /** Without the last-seen retention (30 days). */
+    public NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
+        String store, String duplicateLogin, String redisDownPolicy, String healthBind,
+        int healthInterval, int drainTimeout, String transferHost, int transferPort,
+        int drainRate, String transferSecretFile, boolean skipAuthWithTicket,
+        int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave,
+        boolean authOutageMode, int authOutageWindow, boolean loginRateLimit, int loginRateMax,
+        int loginRateWindow) {
+      this(enabled, proxyId, redisUri, keyPrefix, store, duplicateLogin, redisDownPolicy,
+          healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
+          transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
+          drainWaitForSave, authOutageMode, authOutageWindow, loginRateLimit, loginRateMax,
+          loginRateWindow, 30);
     }
 
     /**
@@ -1107,6 +1125,9 @@ public class VelocityConfiguration implements ProxyConfig {
       if (loginRateLimit && (loginRateMax < 1 || loginRateWindow < 1)) {
         throw new IllegalArgumentException(
             "[network] login-rate-max and login-rate-window must be at least 1");
+      }
+      if (lastSeenTtl < 0) {
+        throw new IllegalArgumentException("[network] last-seen-ttl must not be negative");
       }
     }
 
@@ -1158,7 +1179,8 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getIntOrElse("auth-outage-window", DEFAULT.authOutageWindow()),
           config.getOrElse("login-rate-limit", DEFAULT.loginRateLimit()),
           config.getIntOrElse("login-rate-max", DEFAULT.loginRateMax()),
-          config.getIntOrElse("login-rate-window", DEFAULT.loginRateWindow()));
+          config.getIntOrElse("login-rate-window", DEFAULT.loginRateWindow()),
+          config.getIntOrElse("last-seen-ttl", DEFAULT.lastSeenTtl()));
     }
   }
 }
