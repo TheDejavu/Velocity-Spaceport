@@ -78,6 +78,50 @@ All keys are documented in `velocity.toml`. Point the balancer's health check at
 
 To restart a proxy, run `/spaceport drain` on its console: it turns not-ready, transfers its players to the balancer, and the proxy can then be stopped (a normal shutdown drains too). `/spaceport drain cancel` aborts, `/spaceport network` shows the proxies and players per proxy.
 
+### Plugin API
+
+`proxyServer.getNetwork()` covers what plugins use RedisBungee for, without a separate plugin. It works with the network off too: it then answers for this proxy alone and the futures complete normally. Counts are cached and never wait on Redis; lookups return a `CompletableFuture`.
+
+| RedisBungee feature | Spaceport API |
+| --- | --- |
+| Player count of the network | `getPlayerCount()` |
+| Player count of a server or proxy | `getPlayerCount(server)`, `getPlayerCountOnProxy(proxyId)` |
+| Player list of the network, a server, a proxy | `getPlayers()`, `getPlayers(server)`, `getPlayersOnProxy(proxyId)` |
+| Proxy of a player, server of a player | `getPlayer(uuid or name)` gives a `NetworkPlayer` with `getProxyId()`, `getServerName()` |
+| Is a player online | `isOnline(uuid or name)` |
+| Last online, last server | `getLastSeen(uuid or name)`, `getLastServer(uuid)` |
+| Name to UUID and back | `getUniqueId(name)`, `getUsername(uuid)` |
+| Proxy ids and their counts | `getProxies()`, `getProxy(id)` |
+| Plugin messaging between proxies | `getMessenger()`: `registerListener`, `send`, `broadcast`, `request` |
+| Join, leave and server switch events | `NetworkPlayerJoinEvent`, `NetworkPlayerQuitEvent`, `NetworkPlayerServerChangeEvent` (also for players on other proxies) |
+
+Last-seen records are written when a player leaves and kept for `last-seen-ttl` days (default 30, `0` turns them off). Name lookups check the players online, then the shared profile cache, then the last-seen records, so they also find players who left a while ago.
+
+Messages use a channel such as `myplugin:chat`. `send` goes to one proxy, `broadcast` to all other proxies, `request` waits for the answer of a handler on one proxy. Payloads are at most 32 KiB. Messages are acknowledged and retried for a few seconds, never run twice, and have no order; nothing is kept for a proxy that is down. Listeners run on their own threads, never on a network thread. Call `unregisterAll(plugin)` when your plugin stops.
+
+```java
+NetworkMessenger messenger = server.getNetwork().getMessenger();
+Key channel = Key.key("myplugin", "ping");
+
+// on every proxy: answer pings, and log announcements
+messenger.registerRequestHandler(this, channel, (ch, from, payload) ->
+    ("pong from " + server.getNetwork().getProxyId()).getBytes(StandardCharsets.UTF_8));
+messenger.registerListener(this, Key.key("myplugin", "announce"), (ch, from, payload) ->
+    logger.info("{} says {}", from, new String(payload, StandardCharsets.UTF_8)));
+
+// tell all other proxies, then ask one of them
+messenger.broadcast(Key.key("myplugin", "announce"), "hello".getBytes(StandardCharsets.UTF_8));
+messenger.request(channel, "proxy-2", new byte[0], Duration.ofSeconds(3))
+    .thenAccept(answer -> logger.info(new String(answer, StandardCharsets.UTF_8)))
+    .exceptionally(e -> { logger.warn("no answer: {}", e.toString()); return null; });
+
+server.getNetwork().getLastSeen("Steve").thenAccept(last -> last.ifPresent(l ->
+    logger.info("{} was on {} / {} at {}", l.getUsername(), l.getProxyId(),
+        l.getServerName().orElse("-"), l.getTime())));
+```
+
+Network events have one limit: a proxy that crashes does not send leave events for its players. Their records are removed after the other proxies notice (a few seconds), and they can log in elsewhere at once.
+
 ### Shared login rate limit
 
 Off by default. With `login-rate-limit = true` one address may start at most `login-rate-max` logins (default 20) per `login-rate-window` seconds (default 60), counted across all proxies, so a bot cannot get a fresh allowance by hitting each proxy in turn. It is checked right after the login packet, before the Mojang check, and does not replace Velocity's own `login-ratelimit`. Extra logins are refused with a "too many login attempts" message. The counter is in Redis and asked without blocking; if Redis is unreachable or slow the limit is skipped and logins go through. Refusals show up as `spaceport_login_rate_limited_total`. Do not set it too low for players who share an address.
