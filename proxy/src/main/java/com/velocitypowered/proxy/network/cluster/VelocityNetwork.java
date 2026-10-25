@@ -282,7 +282,8 @@ public final class VelocityNetwork implements Network {
     }
     if (cluster == null) {
       return CompletableFuture.completedFuture(Optional.ofNullable(
-          seenNames.getIfPresent(username.toLowerCase(Locale.ROOT))));
+          seenNames.getIfPresent(username.toLowerCase(Locale.ROOT)))
+          .filter(id -> liveSeen(id) != null));
     }
     NetworkStore store = cluster.store();
     return store.uuidOf(username).thenCompose(id -> id.isPresent()
@@ -299,7 +300,7 @@ public final class VelocityNetwork implements Network {
       return CompletableFuture.completedFuture(online.map(Player::getUsername));
     }
     if (cluster == null) {
-      return CompletableFuture.completedFuture(Optional.ofNullable(seen.getIfPresent(uuid))
+      return CompletableFuture.completedFuture(Optional.ofNullable(liveSeen(uuid))
           .map(LastSeen::getUsername));
     }
     NetworkStore store = cluster.store();
@@ -318,11 +319,7 @@ public final class VelocityNetwork implements Network {
       return CompletableFuture.completedFuture(Optional.of(now(p)));
     }
     if (cluster == null) {
-      LastSeen last = seen.getIfPresent(uuid);
-      long ttl = seenTtlMillis();
-      return CompletableFuture.completedFuture(last == null || ttl <= 0
-          || last.getTime().toEpochMilli() + ttl < System.currentTimeMillis()
-          ? Optional.empty() : Optional.of(last));
+      return CompletableFuture.completedFuture(Optional.ofNullable(liveSeen(uuid)));
     }
     return cluster.store().player(uuid).thenCompose(r -> r.isPresent()
         ? CompletableFuture.completedFuture(Optional.of(now(wrap(r.get()))))
@@ -343,6 +340,14 @@ public final class VelocityNetwork implements Network {
   private static LastSeen now(NetworkPlayer p) {
     return new LastSeen(p.getUniqueId(), p.getUsername(), p.getProxyId(),
         p.getServerName().orElse(null), Instant.now(), true);
+  }
+
+  /** The in-memory last-seen record, or null if there is none or it is older than the ttl. */
+  private @Nullable LastSeen liveSeen(UUID uuid) {
+    LastSeen last = seen.getIfPresent(uuid);
+    long ttl = seenTtlMillis();
+    return last == null || ttl <= 0
+        || last.getTime().toEpochMilli() + ttl < System.currentTimeMillis() ? null : last;
   }
 
   private long seenTtlMillis() {

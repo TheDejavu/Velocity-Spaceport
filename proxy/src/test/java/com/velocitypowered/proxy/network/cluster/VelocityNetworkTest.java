@@ -82,6 +82,9 @@ class VelocityNetworkTest {
       cluster = new ClusterService(config, id, store, this);
       when(server.getAllPlayers()).thenAnswer(i -> List.copyOf(players));
       when(server.getHealth()).thenReturn(mock(ProxyHealth.class));
+      VelocityConfiguration configuration = mock(VelocityConfiguration.class);
+      when(configuration.getNetworkConfig()).thenReturn(NetworkConfig.DEFAULT);
+      when(server.getConfiguration()).thenReturn(configuration);
       when(server.getPlayerCount()).thenAnswer(i -> players.size());
       when(server.getServer(anyString())).thenAnswer(i -> {
         String name = i.getArgument(0);
@@ -293,5 +296,27 @@ class VelocityNetworkTest {
     assertEquals(Optional.of("lobby"), seen.getServerName());
     assertEquals(Optional.of(steve), a.network.getUniqueId("STEVE").get(5, TimeUnit.SECONDS));
     assertEquals(Optional.of("Steve"), a.network.getUsername(steve).get(5, TimeUnit.SECONDS));
+  }
+
+  @Test
+  void lookupsWithoutNetworkRespectTheRetention() throws Exception {
+    final Node a = new Node("a", false);
+    VelocityConfiguration configuration = mock(VelocityConfiguration.class);
+    when(configuration.getNetworkConfig()).thenReturn(NetworkConfig.DEFAULT);
+    when(a.server.getConfiguration()).thenReturn(configuration);
+    UUID steve = UUID.randomUUID();
+    Player gone = mock(Player.class);
+    when(gone.getUniqueId()).thenReturn(steve);
+    when(gone.getUsername()).thenReturn("Steve");
+    when(gone.getCurrentServer()).thenReturn(Optional.empty());
+    a.network.recordQuit(gone);
+    assertEquals(Optional.of(steve), a.network.getUniqueId("steve").get(5, TimeUnit.SECONDS));
+    // retention switched off: nothing is found any more, by name either
+    when(configuration.getNetworkConfig()).thenReturn(new NetworkConfig(false, "auto", "", "sp:",
+        "local", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50, "k", true, 21600, 300,
+        false, false, 43200, false, 20, 60, 0));
+    assertEquals(Optional.empty(), a.network.getUniqueId("steve").get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.empty(), a.network.getUsername(steve).get(5, TimeUnit.SECONDS));
+    assertEquals(Optional.empty(), a.network.getLastSeen(steve).get(5, TimeUnit.SECONDS));
   }
 }
