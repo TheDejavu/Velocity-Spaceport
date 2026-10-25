@@ -53,6 +53,7 @@ public final class VelocityNetwork implements Network {
   private final @Nullable ClusterService cluster;
   private final @Nullable NetworkActions remote;
   private final VelocityNetworkPlayer.Actions actions;
+  private final PluginMessenger messenger;
   /** Players that left, kept in memory when there is no network (bounded). */
   private final Cache<UUID, LastSeen> seen = Caffeine.newBuilder().maximumSize(50_000).build();
   private final Cache<String, UUID> seenNames = Caffeine.newBuilder().maximumSize(50_000).build();
@@ -66,10 +67,35 @@ public final class VelocityNetwork implements Network {
    */
   public VelocityNetwork(VelocityServer server, @Nullable ClusterService cluster,
       @Nullable NetworkActions remote) {
+    this(server, cluster, remote, new PluginMessenger(server, cluster));
+  }
+
+  /**
+   * Creates the network view with a messenger that was created before the cluster started, so no
+   * plugin message can arrive before it listens.
+   *
+   * @param server the proxy
+   * @param cluster the cluster, or null when the network is off
+   * @param remote the cluster's actions, or null when the network is off
+   * @param messenger the plugin messenger, on the same cluster
+   */
+  public VelocityNetwork(VelocityServer server, @Nullable ClusterService cluster,
+      @Nullable NetworkActions remote, PluginMessenger messenger) {
+    this.messenger = messenger;
     this.server = server;
     this.cluster = cluster;
     this.remote = remote;
     this.actions = remote != null ? remote : new LocalActions();
+  }
+
+  @Override
+  public PluginMessenger getMessenger() {
+    return messenger;
+  }
+
+  /** Stops the plugin message threads, on shutdown. */
+  public void close() {
+    messenger.close();
   }
 
   public @Nullable ClusterService cluster() {

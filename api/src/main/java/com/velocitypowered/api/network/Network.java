@@ -245,4 +245,12 @@ public interface Network {
    * @since 4.3.1
    */
   CompletableFuture<Optional<String>> getLastServer(UUID uuid);
+
+  /**
+   * Returns the messenger for plugin messages between proxies.
+   *
+   * @return the messenger
+   * @since 4.3.1
+   */
+  NetworkMessenger getMessenger();
 }

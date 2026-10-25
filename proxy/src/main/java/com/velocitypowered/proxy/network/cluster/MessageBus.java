@@ -53,6 +53,8 @@ public final class MessageBus {
   public static final byte NOT_HERE = 1;
   public static final byte FAILED = 2;
   public static final byte UNKNOWN_ACTION = 3;
+  /** Nothing on the asked proxy handles the request (a plugin channel nobody listens to). */
+  public static final byte NO_HANDLER = 4;
 
   static final long ATTEMPT_MILLIS = 750;
   /** 8 attempts = 6 s: a Sentinel failover (3 s) plus the pub/sub connections coming back. */
@@ -110,6 +112,10 @@ public final class MessageBus {
     return requests.sum();
   }
 
+  int pendingRequests() {
+    return pending.size();
+  }
+
   public long timeouts() {
     return timeouts.sum();
   }
@@ -148,6 +154,21 @@ public final class MessageBus {
    * @return the answer
    */
   public CompletableFuture<Reply> request(String proxy, byte action, byte[] payload) {
+    return request(proxy, action, payload, 0);
+  }
+
+  /**
+   * Like {@link #request(String, byte, byte[])} with a time limit of its own: resends until then,
+   * and fails with a {@link TimeoutException} exactly at the limit.
+   *
+   * @param proxy the proxy to ask
+   * @param action what to do
+   * @param payload the request's data
+   * @param timeoutMillis how long to wait for the answer, 0 for the default attempts
+   * @return the answer
+   */
+  public CompletableFuture<Reply> request(String proxy, byte action, byte[] payload,
+      long timeoutMillis) {
     long id = ids.incrementAndGet();
     requests.increment();
     CompletableFuture<Reply> reply = new CompletableFuture<>();
@@ -160,19 +181,30 @@ public final class MessageBus {
       out.writeInt(payload.length);
       out.write(payload);
     });
-    send(proxy, id, frame, reply, 1);
+    int attempts = timeoutMillis <= 0 ? ATTEMPTS
+        : (int) Math.max(1, (timeoutMillis + ATTEMPT_MILLIS - 1) / ATTEMPT_MILLIS);
+    if (timeoutMillis > 0) {
+      timer.schedule(() -> {
+        if (pending.remove(id, reply) && reply.completeExceptionally(
+            new TimeoutException("no answer from proxy " + proxy))) {
+          timeouts.increment();
+        }
+      }, timeoutMillis, TimeUnit.MILLISECONDS);
+    }
+    send(proxy, id, frame, reply, 1, attempts);
     return reply;
   }
 
   private void send(String proxy, long id, byte[] frame, CompletableFuture<Reply> reply,
-      int attempt) {
+      int attempt, int attempts) {
     store.publish("msg:" + proxy, frame).exceptionally(ex -> null); // a failed send just times out
     timer.schedule(() -> {
       if (reply.isDone()) {
+        pending.remove(id, reply); // answered, or given up by the caller
         return;
       }
-      if (attempt < ATTEMPTS) {
-        send(proxy, id, frame, reply, attempt + 1);
+      if (attempt < attempts) {
+        send(proxy, id, frame, reply, attempt + 1, attempts);
       } else {
         timeouts.increment();
         pending.remove(id);

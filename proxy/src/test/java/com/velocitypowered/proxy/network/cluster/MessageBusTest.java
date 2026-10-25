@@ -114,4 +114,20 @@ class MessageBusTest {
         () -> a.request("nobody", (byte) 1, new byte[0]).get(10, TimeUnit.SECONDS));
     assertTrue(e.getCause() instanceof TimeoutException);
   }
+
+  @Test
+  void ownTimeoutIsExactAndForgetsTheRequest() throws Exception {
+    MessageBus a = bus("a");
+    long start = System.currentTimeMillis();
+    ExecutionException e = assertThrows(ExecutionException.class,
+        () -> a.request("nobody", (byte) 1, new byte[0], 400).get(5, TimeUnit.SECONDS));
+    assertTrue(e.getCause() instanceof TimeoutException);
+    long took = System.currentTimeMillis() - start;
+    assertTrue(took >= 350 && took < 1_500, "took " + took);
+    // a request the caller gave up on is not kept
+    CompletableFuture<Reply> early = a.request("nobody", (byte) 1, new byte[0], 5_000);
+    early.cancel(true);
+    Thread.sleep(MessageBus.ATTEMPT_MILLIS + 300);
+    assertEquals(0, a.pendingRequests());
+  }
 }

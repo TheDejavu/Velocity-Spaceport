@@ -61,6 +61,7 @@ import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.network.cluster.LocalStore;
 import com.velocitypowered.proxy.network.cluster.NetworkActions;
 import com.velocitypowered.proxy.network.cluster.NetworkStore;
+import com.velocitypowered.proxy.network.cluster.PluginMessenger;
 import com.velocitypowered.proxy.network.cluster.RedisStore;
 import com.velocitypowered.proxy.network.cluster.VelocityNetwork;
 import com.velocitypowered.proxy.network.health.ProxyHealth;
@@ -701,6 +702,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
         eventManager.fire(new ProxyShutdownEvent()).join();
 
+        network.close();
         if (cluster != null) {
           cluster.close();
         }
@@ -970,12 +972,13 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     });
     NetworkActions actions = new NetworkActions(this, cluster);
     cluster.setActions(actions);
+    PluginMessenger messenger = new PluginMessenger(this, cluster);
     if (!configuration.isAcceptTransfers()) {
       logger.warn("[network] is on but accepts-transfers is false: players transferred from a"
           + " draining proxy will be refused here. Set advanced.accepts-transfers = true.");
     }
     cluster.start();
-    network = new VelocityNetwork(this, cluster, actions);
+    network = new VelocityNetwork(this, cluster, actions, messenger);
     NetworkCommands.register(this);
   }
 
