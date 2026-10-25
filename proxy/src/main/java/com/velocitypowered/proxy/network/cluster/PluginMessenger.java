@@ -26,9 +26,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -52,6 +53,11 @@ public final class PluginMessenger implements NetworkMessenger {
   static final byte PLUGIN = 9;
   private static final byte MESSAGE = 0;
   private static final byte REQUEST = 1;
+  /**
+   * Tasks of one channel that may wait or run at once; more are dropped, so one slow plugin
+   * cannot fill the shared queue.
+   */
+  static final int CHANNEL_IN_FLIGHT_MAX = 256;
   private static final Reply EMPTY_FAILED = Reply.of(MessageBus.FAILED);
 
   private static final Logger logger = LogManager.getLogger(PluginMessenger.class);
@@ -64,6 +70,7 @@ public final class PluginMessenger implements NetworkMessenger {
   private final @Nullable VelocityServer server;
   private final @Nullable ClusterService cluster;
   private final Map<Key, List<Registration>> channels = new ConcurrentHashMap<>();
+  private final Map<Key, AtomicInteger> inFlight = new ConcurrentHashMap<>();
   private final AtomicInteger threads = new AtomicInteger();
   private final ThreadPoolExecutor executor = new ThreadPoolExecutor(4, 4, 30, TimeUnit.SECONDS,
       new LinkedBlockingQueue<>(4096), r -> {
@@ -104,31 +111,38 @@ public final class PluginMessenger implements NetworkMessenger {
   @Override
   public void registerListener(Object plugin, Key channel, Listener listener) {
     checkPlugin(plugin);
-    channels.computeIfAbsent(channel, k -> new CopyOnWriteArrayList<>())
-        .add(new Registration(plugin, java.util.Objects.requireNonNull(listener, "listener"),
-            null));
+    Registration added = new Registration(plugin, Objects.requireNonNull(listener, "listener"),
+        null);
+    channels.compute(channel, (k, list) -> append(list, added));
   }
 
   @Override
-  public synchronized void registerRequestHandler(Object plugin, Key channel,
-      RequestHandler handler) {
+  public void registerRequestHandler(Object plugin, Key channel, RequestHandler handler) {
     checkPlugin(plugin);
-    List<Registration> list = channels.computeIfAbsent(channel,
-        k -> new CopyOnWriteArrayList<>());
-    if (list.stream().anyMatch(r -> r.handler() != null)) {
-      throw new IllegalStateException("channel " + channel.asString()
-          + " already has a request handler");
-    }
-    list.add(new Registration(plugin, null, java.util.Objects.requireNonNull(handler, "handler")));
+    Registration added = new Registration(plugin, null,
+        Objects.requireNonNull(handler, "handler"));
+    channels.compute(channel, (k, list) -> {
+      if (list != null && list.stream().anyMatch(r -> r.handler() != null)) {
+        throw new IllegalStateException("channel " + channel.asString()
+            + " already has a request handler");
+      }
+      return append(list, added);
+    });
+  }
+
+  /** Registrations are replaced, never changed, so readers see a consistent list. */
+  private static List<Registration> append(@Nullable List<Registration> list, Registration r) {
+    List<Registration> next = new ArrayList<>(list == null ? List.of() : list);
+    next.add(r);
+    return List.copyOf(next);
   }
 
   @Override
   public void unregister(Object plugin, Key channel) {
-    List<Registration> list = channels.get(channel);
-    if (list != null) {
-      list.removeIf(r -> r.plugin() == plugin);
-      channels.computeIfPresent(channel, (k, v) -> v.isEmpty() ? null : v);
-    }
+    channels.computeIfPresent(channel, (k, list) -> {
+      List<Registration> kept = list.stream().filter(r -> r.plugin() != plugin).toList();
+      return kept.isEmpty() ? null : kept;
+    });
   }
 
   @Override
@@ -142,6 +156,30 @@ public final class PluginMessenger implements NetworkMessenger {
     if (payload.length > MAX_PAYLOAD_BYTES) {
       throw new IllegalArgumentException("payload of " + payload.length + " bytes is larger than "
           + MAX_PAYLOAD_BYTES);
+    }
+  }
+
+  /** Runs a task of a channel on the pool, unless the channel has too many in flight. */
+  private boolean submit(Key channel, Runnable task) {
+    AtomicInteger count = inFlight.computeIfAbsent(channel, k -> new AtomicInteger());
+    if (count.incrementAndGet() > CHANNEL_IN_FLIGHT_MAX) {
+      count.decrementAndGet();
+      logger.warn("Too many plugin messages in flight on {}; dropped one", channel.asString());
+      return false;
+    }
+    try {
+      executor.execute(() -> {
+        try {
+          task.run();
+        } finally {
+          count.decrementAndGet();
+        }
+      });
+      return true;
+    } catch (RejectedExecutionException e) {
+      count.decrementAndGet();
+      logger.warn("Plugin message queue is full; dropped a message on {}", channel.asString());
+      return false;
     }
   }
 
@@ -164,17 +202,15 @@ public final class PluginMessenger implements NetworkMessenger {
         continue;
       }
       n++;
-      try {
-        executor.execute(() -> {
-          try {
-            listener.onMessage(channel, from, payload);
-          } catch (Throwable t) {
-            logger.warn("Listener of {} on {} failed", r.plugin().getClass().getName(),
-                channel.asString(), t);
-          }
-        });
-      } catch (RejectedExecutionException e) {
-        logger.warn("Plugin message queue is full; dropped a message on {}", channel.asString());
+      byte[] copy = payload.clone(); // every listener gets its own, and may change it
+      if (!submit(channel, () -> {
+        try {
+          listener.onMessage(channel, from, copy);
+        } catch (Throwable t) {
+          logger.warn("Listener of {} on {} failed", r.plugin().getClass().getName(),
+              channel.asString(), t);
+        }
+      })) {
         return -1;
       }
     }
@@ -190,25 +226,23 @@ public final class PluginMessenger implements NetworkMessenger {
           "no request handler on " + channel.asString()));
     }
     CompletableFuture<byte[]> result = new CompletableFuture<>();
-    try {
-      executor.execute(() -> {
-        try {
-          byte[] answer = handler.onRequest(channel, from, payload);
-          answer = answer == null ? new byte[0] : answer;
-          if (answer.length > MAX_PAYLOAD_BYTES) {
-            logger.warn("Handler of {} answered with {} bytes, more than {}", channel.asString(),
-                answer.length, MAX_PAYLOAD_BYTES);
-            result.completeExceptionally(new IllegalStateException("answer too large"));
-          } else {
-            result.complete(answer);
-          }
-        } catch (Throwable t) {
-          logger.warn("Request handler on {} failed", channel.asString(), t);
-          result.completeExceptionally(new IllegalStateException("handler failed"));
+    byte[] copy = payload.clone();
+    if (!submit(channel, () -> {
+      try {
+        byte[] answer = handler.onRequest(channel, from, copy);
+        answer = answer == null ? new byte[0] : answer.clone();
+        if (answer.length > MAX_PAYLOAD_BYTES) {
+          logger.warn("Handler of {} answered with {} bytes, more than {}", channel.asString(),
+              answer.length, MAX_PAYLOAD_BYTES);
+          result.completeExceptionally(new IllegalStateException("answer too large"));
+        } else {
+          result.complete(answer);
         }
-      });
-    } catch (RejectedExecutionException e) {
-      logger.warn("Plugin message queue is full; dropped a request on {}", channel.asString());
+      } catch (Throwable t) {
+        logger.warn("Request handler on {} failed", channel.asString(), t);
+        result.completeExceptionally(new IllegalStateException("handler failed"));
+      }
+    })) {
       result.completeExceptionally(new IllegalStateException("handler queue full"));
     }
     return result;
@@ -277,19 +311,36 @@ public final class PluginMessenger implements NetworkMessenger {
     });
   }
 
+  /** Completes with the same exception types for local and remote failures. */
+  private static <T> CompletableFuture<T> plain(CompletableFuture<T> future) {
+    CompletableFuture<T> out = new CompletableFuture<>();
+    future.whenComplete((v, ex) -> {
+      if (ex == null) {
+        out.complete(v);
+      } else {
+        Throwable cause = ex;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+          cause = cause.getCause();
+        }
+        out.completeExceptionally(cause);
+      }
+    });
+    return out;
+  }
+
   @Override
   public CompletableFuture<Boolean> send(Key channel, String proxyId, byte[] payload) {
     checkPayload(payload);
     if (isSelf(proxyId)) {
-      return CompletableFuture.completedFuture(deliver(channel, self(), payload) > 0);
+      return CompletableFuture.completedFuture(deliver(channel, self(), payload.clone()) > 0);
     }
-    return alive(proxyId).thenCompose(known -> {
+    return plain(alive(proxyId).thenCompose(known -> {
       if (!known) {
         return CompletableFuture.completedFuture(false);
       }
       return cluster.bus().request(proxyId, PLUGIN, frame(channel, MESSAGE, payload))
           .thenApply(Reply::ok);
-    });
+    }));
   }
 
   @Override
@@ -317,9 +368,10 @@ public final class PluginMessenger implements NetworkMessenger {
     }
     long millis = Math.min(timeout.toMillis(), MAX_TIMEOUT.toMillis());
     if (isSelf(proxyId)) {
-      return answer(channel, self(), payload).orTimeout(millis, TimeUnit.MILLISECONDS);
+      return plain(answer(channel, self(), payload.clone())
+          .orTimeout(millis, TimeUnit.MILLISECONDS));
     }
-    return alive(proxyId).thenCompose(known -> {
+    return plain(alive(proxyId).thenCompose(known -> {
       if (!known) {
         return CompletableFuture.failedFuture(new IllegalArgumentException(
             "unknown proxy " + proxyId));
@@ -334,6 +386,6 @@ public final class PluginMessenger implements NetworkMessenger {
                     ? "proxy " + proxyId + " has no request handler on " + channel.asString()
                     : "the request handler on " + proxyId + " failed"));
           });
-    });
+    }));
   }
 }

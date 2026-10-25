@@ -303,4 +303,104 @@ class PluginMessengerTest {
     assertInstanceOf(IllegalArgumentException.class, unknown.getCause());
     alone.close();
   }
+
+  @Test
+  void slowChannelCannotFillTheQueueForOthers() throws Exception {
+    PluginMessenger alone = new PluginMessenger(null, null);
+    CountDownLatch release = new CountDownLatch(1);
+    Key slow = Key.key("test", "slow");
+    alone.registerListener(plugin, slow, (ch, from, p) -> {
+      try {
+        release.await();
+      } catch (InterruptedException ignored) {
+        // test over
+      }
+    });
+    AtomicInteger got = new AtomicInteger();
+    alone.registerListener(plugin, CHANNEL, (ch, from, p) -> got.incrementAndGet());
+    int accepted = 0;
+    for (int i = 0; i < PluginMessenger.CHANNEL_IN_FLIGHT_MAX + 50; i++) {
+      if (alone.send(slow, "local", bytes("x")).get(2, TimeUnit.SECONDS)) {
+        accepted++;
+      }
+    }
+    assertEquals(PluginMessenger.CHANNEL_IN_FLIGHT_MAX, accepted);
+    // the slow channel is full, but its pool threads are stuck: the other channel still queues
+    assertTrue(alone.send(CHANNEL, "local", bytes("y")).get(2, TimeUnit.SECONDS));
+    release.countDown();
+    await(() -> got.get() == 1);
+    alone.close();
+  }
+
+  @Test
+  void listenersGetTheirOwnCopyOfThePayload() throws Exception {
+    PluginMessenger alone = new PluginMessenger(null, null);
+    byte[] sent = bytes("abc");
+    CountDownLatch seen = new CountDownLatch(2);
+    List<String> got = new CopyOnWriteArrayList<>();
+    for (int i = 0; i < 2; i++) {
+      alone.registerListener(new Object(), CHANNEL, (ch, from, p) -> {
+        got.add(new String(p, StandardCharsets.UTF_8));
+        p[0] = 'X'; // must not leak to the other listener or the sender
+        seen.countDown();
+      });
+    }
+    alone.send(CHANNEL, "local", sent).get(2, TimeUnit.SECONDS);
+    assertTrue(seen.await(2, TimeUnit.SECONDS));
+    assertEquals(List.of("abc", "abc"), got);
+    assertArrayEquals(bytes("abc"), sent);
+    alone.close();
+  }
+
+  @Test
+  void failuresAreTheSameTypeLocallyAndRemotely() throws Exception {
+    final PluginMessenger a = proxy("a");
+    final PluginMessenger b = proxy("b");
+    meet(2);
+    Key slow = Key.key("test", "slow");
+    b.registerRequestHandler(plugin, slow, (c, f, p) -> {
+      Thread.sleep(1_500);
+      return p;
+    });
+    a.registerRequestHandler(plugin, slow, (c, f, p) -> {
+      Thread.sleep(1_500);
+      return p;
+    });
+    // seen from a callback, no CompletionException wraps any of them
+    assertEquals(TimeoutException.class, a.request(slow, "b", bytes("x"), Duration.ofMillis(300))
+        .handle((v, ex) -> ex.getClass()).get(5, TimeUnit.SECONDS));
+    assertEquals(TimeoutException.class, a.request(slow, "a", bytes("x"), Duration.ofMillis(300))
+        .handle((v, ex) -> ex.getClass()).get(5, TimeUnit.SECONDS));
+    assertEquals(IllegalStateException.class, a.request(CHANNEL, "b", bytes("x"),
+        Duration.ofSeconds(2)).handle((v, ex) -> ex.getClass()).get(5, TimeUnit.SECONDS));
+    assertEquals(IllegalStateException.class, a.request(CHANNEL, "a", bytes("x"),
+        Duration.ofSeconds(2)).handle((v, ex) -> ex.getClass()).get(5, TimeUnit.SECONDS));
+    assertEquals(IllegalArgumentException.class, a.request(CHANNEL, "nope", bytes("x"),
+        Duration.ofSeconds(2)).handle((v, ex) -> ex.getClass()).get(5, TimeUnit.SECONDS));
+  }
+
+  @Test
+  void registeringWhileUnregisteringLosesNothing() throws Exception {
+    PluginMessenger alone = new PluginMessenger(null, null);
+    Object other = new Object();
+    alone.registerListener(other, CHANNEL, (ch, from, p) -> { });
+    AtomicInteger got = new AtomicInteger();
+    int rounds = 200;
+    Thread unregistering = new Thread(() -> {
+      for (int i = 0; i < rounds; i++) {
+        alone.unregister(other, CHANNEL);
+        alone.registerListener(other, CHANNEL, (ch, from, p) -> { });
+      }
+    });
+    Object mine = new Object();
+    unregistering.start();
+    for (int i = 0; i < rounds; i++) {
+      alone.registerListener(mine, CHANNEL, (ch, from, p) -> got.incrementAndGet());
+    }
+    unregistering.join();
+    // every registration of mine survived the concurrent unregistering of the other plugin
+    assertTrue(alone.send(CHANNEL, "local", bytes("x")).get(2, TimeUnit.SECONDS));
+    await(() -> got.get() == rounds);
+    alone.close();
+  }
 }

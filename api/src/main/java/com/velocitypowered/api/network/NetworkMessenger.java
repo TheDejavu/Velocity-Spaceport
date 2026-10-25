@@ -128,9 +128,11 @@ public interface NetworkMessenger {
    * @param channel the channel
    * @param proxyId the id of the receiving proxy
    * @param payload the payload, at most {@link #MAX_PAYLOAD_BYTES} bytes
-   * @return true if a listener on that proxy got it; false if the proxy is unknown or has no
-   *     listener on the channel; fails with a {@link java.util.concurrent.TimeoutException} if
-   *     the proxy did not answer
+   * @return true if a listener on that proxy got it; false if the proxy is unknown, has no
+   *     listener on the channel, or dropped the message because the channel had too many
+   *     messages waiting; fails with a {@link java.util.concurrent.TimeoutException} if the proxy
+   *     did not answer. Local and remote failures use the same exception types, never wrapped in
+   *     a {@code CompletionException}
    * @throws IllegalArgumentException if the payload is too large
    * @since 4.3.1
    */
