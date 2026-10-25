@@ -162,51 +162,6 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     return true;
   }
 
-  private void firePreLogin() {
-    final PreLoginEvent event = new PreLoginEvent(inbound, login.getUsername(), login.getHolderUuid());
-    server.getEventManager().fire(event).thenRunAsync(() -> {
-      if (mcConnection.isClosed()) {
-        // The player was disconnected
-        return;
-      }
-
-      PreLoginComponentResult result = event.getResult();
-      Optional<Component> disconnectReason = result.getReasonComponent();
-      if (disconnectReason.isPresent()) {
-        // The component is guaranteed to be provided if the connection was denied.
-        inbound.disconnect(disconnectReason.get());
-        return;
-      }
-
-      inbound.loginEventFired(() -> {
-        if (mcConnection.isClosed()) {
-          // The player was disconnected
-          return;
-        }
-
-        mcConnection.eventLoop().execute(() -> {
-          ClusterService cluster = server.getCluster();
-          if (cluster != null && cluster.hasTicketKeys()
-              && inbound.getHandshakeIntent() == HandshakeIntent.TRANSFER
-              && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)
-              && !result.isForceOfflineMode()) {
-            // Spaceport: a transferred client may bring a ticket from the proxy it came from.
-            // It has to be read before encryption: a client told not to authenticate cannot be
-            // checked with Mojang afterwards. The ticket is single use and bound to the address.
-            this.preLoginResult = result;
-            this.currentState = LoginState.COOKIE_REQUESTED;
-            mcConnection.write(new ClientboundCookieRequestPacket(ClusterService.ROUTE_COOKIE));
-            return;
-          }
-          continueLogin(result);
-        });
-      });
-    }, mcConnection.eventLoop()).exceptionally((ex) -> {
-      logger.error("Exception in pre-login stage", ex);
-      return null;
-    });
-  }
-
   @Override
   public boolean handle(ServerboundCookieResponsePacket packet) {
     if (currentState != LoginState.COOKIE_REQUESTED
@@ -462,5 +417,50 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     LOGIN_PACKET_RECEIVED,
     ENCRYPTION_REQUEST_SENT,
     ENCRYPTION_RESPONSE_RECEIVED
+  }
+
+  private void firePreLogin() {
+    final PreLoginEvent event = new PreLoginEvent(inbound, login.getUsername(), login.getHolderUuid());
+    server.getEventManager().fire(event).thenRunAsync(() -> {
+      if (mcConnection.isClosed()) {
+        // The player was disconnected
+        return;
+      }
+
+      PreLoginComponentResult result = event.getResult();
+      Optional<Component> disconnectReason = result.getReasonComponent();
+      if (disconnectReason.isPresent()) {
+        // The component is guaranteed to be provided if the connection was denied.
+        inbound.disconnect(disconnectReason.get());
+        return;
+      }
+
+      inbound.loginEventFired(() -> {
+        if (mcConnection.isClosed()) {
+          // The player was disconnected
+          return;
+        }
+
+        mcConnection.eventLoop().execute(() -> {
+          ClusterService cluster = server.getCluster();
+          if (cluster != null && cluster.hasTicketKeys()
+              && inbound.getHandshakeIntent() == HandshakeIntent.TRANSFER
+              && mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)
+              && !result.isForceOfflineMode()) {
+            // Spaceport: a transferred client may bring a ticket from the proxy it came from.
+            // It has to be read before encryption: a client told not to authenticate cannot be
+            // checked with Mojang afterwards. The ticket is single use and bound to the address.
+            this.preLoginResult = result;
+            this.currentState = LoginState.COOKIE_REQUESTED;
+            mcConnection.write(new ClientboundCookieRequestPacket(ClusterService.ROUTE_COOKIE));
+            return;
+          }
+          continueLogin(result);
+        });
+      });
+    }, mcConnection.eventLoop()).exceptionally((ex) -> {
+      logger.error("Exception in pre-login stage", ex);
+      return null;
+    });
   }
 }

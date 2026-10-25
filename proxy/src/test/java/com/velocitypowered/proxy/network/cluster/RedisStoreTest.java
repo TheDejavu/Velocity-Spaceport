@@ -225,7 +225,7 @@ class RedisStoreTest {
   }
 
   @Test
-  void rateHitCountsInAFixedWindow() throws Exception {
+  void rateHitCountsInFixedWindow() throws Exception {
     assertEquals(1, store.rateHit("192.0.2.1", 300).get(5, TimeUnit.SECONDS));
     assertEquals(2, store.rateHit("192.0.2.1", 300).get(5, TimeUnit.SECONDS));
     assertEquals(1, store.rateHit("192.0.2.2", 300).get(5, TimeUnit.SECONDS));
