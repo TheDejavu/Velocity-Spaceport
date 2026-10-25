@@ -35,6 +35,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -71,6 +72,17 @@ public final class ClusterService implements AutoCloseable {
 
     /** Backend servers this proxy has players on. */
     Collection<String> localServers();
+
+    /**
+     * Players per backend server on this proxy.
+     *
+     * @return server name to player count, only servers with players
+     */
+    default Map<String, Integer> localServerCounts() {
+      Map<String, Integer> counts = new HashMap<>();
+      localServers().forEach(name -> counts.put(name, 1));
+      return counts;
+    }
 
     /** Disconnects a local player that logged in elsewhere. */
     void disconnectDuplicate(UUID player);
@@ -147,6 +159,8 @@ public final class ClusterService implements AutoCloseable {
   private boolean tickInFlight;
   private volatile int remotePlayers;
   private volatile List<ProxyState> proxies = List.of();
+  /** Players per backend server on each other proxy, from the last tick. */
+  private volatile Map<String, Map<String, Integer>> remoteServerCounts = Map.of();
 
   /** A login of a local player, as written to the store. */
   static final class Session {
@@ -203,7 +217,7 @@ public final class ClusterService implements AutoCloseable {
       epoch = Math.max(wall, store.nextEpoch().get(5, TimeUnit.SECONDS));
       store.subscribe("msg:all", this::onMessage).get(5, TimeUnit.SECONDS);
       store.subscribe("msg:" + proxyId, this::onMessage).get(5, TimeUnit.SECONDS);
-      Tick first = store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance,
+      Tick first = store.tick(proxyId, host.localPlayerCount(), encodedServers(), instance,
           draining, TTL_MILLIS, candidateGeneration).get(5, TimeUnit.SECONDS);
       applyTick(first);
       logger.info("Joined the network as {} ({} proxies, {} players)", proxyId,
@@ -234,7 +248,7 @@ public final class ClusterService implements AutoCloseable {
     }
     tickInFlight = true;
     long sent = System.nanoTime();
-    store.tick(proxyId, host.localPlayerCount(), host.localServers(), instance, draining,
+    store.tick(proxyId, host.localPlayerCount(), encodedServers(), instance, draining,
             TTL_MILLIS, candidateGeneration)
         .orTimeout(2, TimeUnit.SECONDS)
         .whenComplete((t, ex) -> timer.execute(() -> {
@@ -252,6 +266,21 @@ public final class ClusterService implements AutoCloseable {
             applyTick(t);
           }
         }));
+  }
+
+  /** Servers as the tick carries them: "name=players". */
+  private List<String> encodedServers() {
+    List<String> out = new ArrayList<>();
+    host.localServerCounts().forEach((name, n) -> out.add(name + "=" + n));
+    return out;
+  }
+
+  private static int parseCount(String text) {
+    try {
+      return Integer.parseInt(text);
+    } catch (NumberFormatException e) {
+      return 0;
+    }
   }
 
   private static String rootMessage(Throwable e) {
@@ -321,7 +350,25 @@ public final class ClusterService implements AutoCloseable {
       }
     }
     remotePlayers = remote;
-    proxies = List.copyOf(t.proxies());
+    List<ProxyState> decoded = new ArrayList<>(t.proxies().size());
+    Map<String, Map<String, Integer>> counts = new HashMap<>();
+    for (ProxyState p : t.proxies()) {
+      List<String> names = new ArrayList<>(p.servers().size());
+      Map<String, Integer> perServer = new HashMap<>();
+      for (String entry : p.servers()) {
+        int eq = entry.indexOf('=');
+        String name = eq < 0 ? entry : entry.substring(0, eq);
+        names.add(name);
+        perServer.put(name, eq < 0 ? 1 : parseCount(entry.substring(eq + 1)));
+      }
+      decoded.add(new ProxyState(p.id(), p.players(), p.ageMillis(), List.copyOf(names),
+          p.instance(), p.draining()));
+      if (!p.id().equals(proxyId) && p.players() >= 0 && p.ageMillis() < DEAD_AFTER_MILLIS) {
+        counts.put(p.id(), perServer);
+      }
+    }
+    remoteServerCounts = counts;
+    proxies = List.copyOf(decoded);
     if (resync) {
       resync();
     }
@@ -882,6 +929,25 @@ public final class ClusterService implements AutoCloseable {
    */
   public int getPlayerCount() {
     return remotePlayers + host.localPlayerCount();
+  }
+
+  /**
+   * Returns the number of players on a backend server on the other proxies, from the last tick.
+   * Never waits on the store.
+   *
+   * @param server the backend server's name
+   * @return the count on the other proxies
+   */
+  public int remotePlayerCount(String server) {
+    int total = 0;
+    for (Map<String, Integer> counts : remoteServerCounts.values()) {
+      for (Map.Entry<String, Integer> e : counts.entrySet()) {
+        if (e.getKey().equalsIgnoreCase(server)) {
+          total += e.getValue();
+        }
+      }
+    }
+    return total;
   }
 
   /**

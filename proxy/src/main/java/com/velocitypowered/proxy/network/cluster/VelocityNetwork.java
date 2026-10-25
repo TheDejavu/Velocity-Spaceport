@@ -179,6 +179,91 @@ public final class VelocityNetwork implements Network {
         : cluster.store().profileByName(username).thenApply(p -> p.map(VelocityNetwork::toProfile));
   }
 
+  @Override
+  public int getPlayerCount(String serverName) {
+    int local = server.getServer(serverName).map(RegisteredServer::getPlayersConnected)
+        .map(Collection::size).orElse(0);
+    return cluster == null ? local : local + cluster.remotePlayerCount(serverName);
+  }
+
+  @Override
+  public int getPlayerCountOnProxy(String proxyId) {
+    return getProxy(proxyId).map(ProxyNode::getPlayerCount).orElse(0);
+  }
+
+  @Override
+  public Optional<ProxyNode> getProxy(String proxyId) {
+    return getProxies().stream().filter(p -> p.getId().equals(proxyId)).findFirst();
+  }
+
+  @Override
+  public CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName) {
+    if (remote == null) {
+      List<NetworkPlayer> players = new ArrayList<>();
+      server.getServer(serverName).ifPresent(rs -> rs.getPlayersConnected()
+          .forEach(p -> players.add(local(p))));
+      return CompletableFuture.completedFuture(players);
+    }
+    return remote.playersOnServer(serverName).thenApply(this::wrapAll);
+  }
+
+  @Override
+  public CompletableFuture<Collection<NetworkPlayer>> getPlayersOnProxy(String proxyId) {
+    if (remote == null) {
+      return proxyId.equals(getProxyId()) ? getPlayers()
+          : CompletableFuture.completedFuture(List.of());
+    }
+    return remote.playersOnProxy(proxyId).thenApply(this::wrapAll);
+  }
+
+  private Collection<NetworkPlayer> wrapAll(List<PlayerRecord> records) {
+    List<NetworkPlayer> players = new ArrayList<>(records.size());
+    records.forEach(r -> players.add(wrap(r)));
+    return players;
+  }
+
+  @Override
+  public CompletableFuture<Boolean> isOnline(UUID uuid) {
+    if (server.getPlayer(uuid).isPresent()) {
+      return CompletableFuture.completedFuture(true);
+    }
+    return cluster == null ? CompletableFuture.completedFuture(false)
+        : cluster.store().player(uuid).thenApply(Optional::isPresent);
+  }
+
+  @Override
+  public CompletableFuture<Boolean> isOnline(String username) {
+    if (server.getPlayer(username).isPresent()) {
+      return CompletableFuture.completedFuture(true);
+    }
+    return cluster == null ? CompletableFuture.completedFuture(false)
+        : cluster.store().uuidOf(username).thenApply(Optional::isPresent);
+  }
+
+  @Override
+  public CompletableFuture<Optional<UUID>> getUniqueId(String username) {
+    Optional<Player> online = server.getPlayer(username);
+    if (online.isPresent() || cluster == null) {
+      return CompletableFuture.completedFuture(online.map(Player::getUniqueId));
+    }
+    NetworkStore store = cluster.store();
+    return store.uuidOf(username).thenCompose(id -> id.isPresent()
+        ? CompletableFuture.completedFuture(id)
+        : store.profileByName(username).thenApply(p -> p.map(NetworkStore.CachedProfile::uuid)));
+  }
+
+  @Override
+  public CompletableFuture<Optional<String>> getUsername(UUID uuid) {
+    Optional<Player> online = server.getPlayer(uuid);
+    if (online.isPresent() || cluster == null) {
+      return CompletableFuture.completedFuture(online.map(Player::getUsername));
+    }
+    NetworkStore store = cluster.store();
+    return store.player(uuid).thenCompose(r -> r.isPresent()
+        ? CompletableFuture.completedFuture(r.map(PlayerRecord::name))
+        : store.profile(uuid).thenApply(p -> p.map(NetworkStore.CachedProfile::name)));
+  }
+
   private static GameProfile toProfile(NetworkStore.CachedProfile p) {
     return new GameProfile(p.uuid(), p.name(), p.properties() == null ? List.of()
         : List.of(VelocityServer.GENERAL_GSON.fromJson(p.properties(),

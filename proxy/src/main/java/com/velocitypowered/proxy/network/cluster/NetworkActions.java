@@ -229,17 +229,55 @@ public final class NetworkActions implements VelocityNetworkPlayer.Actions {
    * @return the players
    */
   public CompletableFuture<List<PlayerRecord>> players() {
+    return collect(proxy -> true, p -> true);
+  }
+
+  /**
+   * Lists the players on one backend server anywhere on the network. Only the proxies that
+   * reported players on it in the last tick are asked.
+   *
+   * @param serverName the server's name, ignoring case
+   * @return the players
+   */
+  public CompletableFuture<List<PlayerRecord>> playersOnServer(String serverName) {
+    return collect(proxy -> proxy.servers().stream().anyMatch(serverName::equalsIgnoreCase),
+        p -> p.server() != null && p.server().equalsIgnoreCase(serverName));
+  }
+
+  /**
+   * Lists the players of one proxy.
+   *
+   * @param proxyId the proxy
+   * @return its players, empty if it is unknown or does not answer in time
+   */
+  public CompletableFuture<List<PlayerRecord>> playersOnProxy(String proxyId) {
+    if (proxyId.equals(cluster.proxyId())) {
+      return CompletableFuture.completedFuture(localPlayers());
+    }
+    return cluster.liveRemotes().stream().filter(p -> p.id().equals(proxyId)).findFirst()
+        .map(this::remotePlayers).orElseGet(() -> CompletableFuture.completedFuture(List.of()));
+  }
+
+  private CompletableFuture<List<PlayerRecord>> remotePlayers(ProxyState proxy) {
+    return cluster.bus().request(proxy.id(), LIST, new byte[0])
+        .thenApply(reply -> reply.ok() ? decodePlayers(proxy.id(), reply.payload())
+            : List.<PlayerRecord>of())
+        .exceptionally(ex -> List.of());
+  }
+
+  private CompletableFuture<List<PlayerRecord>> collect(
+      java.util.function.Predicate<ProxyState> ask,
+      java.util.function.Predicate<PlayerRecord> keep) {
     List<CompletableFuture<List<PlayerRecord>>> parts = new ArrayList<>();
     parts.add(CompletableFuture.completedFuture(localPlayers()));
     for (ProxyState proxy : cluster.liveRemotes()) {
-      parts.add(cluster.bus().request(proxy.id(), LIST, new byte[0])
-          .thenApply(reply -> reply.ok() ? decodePlayers(proxy.id(), reply.payload())
-              : List.<PlayerRecord>of())
-          .exceptionally(ex -> List.of()));
+      if (ask.test(proxy)) {
+        parts.add(remotePlayers(proxy));
+      }
     }
     return CompletableFuture.allOf(parts.toArray(CompletableFuture[]::new)).thenApply(v -> {
       List<PlayerRecord> all = new ArrayList<>();
-      parts.forEach(p -> all.addAll(p.join()));
+      parts.forEach(p -> p.join().stream().filter(keep).forEach(all::add));
       return all;
     });
   }

@@ -98,6 +98,7 @@ import java.security.KeyPair;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
@@ -940,6 +941,18 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
           }
         }
         return names;
+      }
+
+      @Override
+      public Map<String, Integer> localServerCounts() {
+        Map<String, Integer> counts = new HashMap<>();
+        for (ConnectedPlayer p : connectionsByUuid.values()) {
+          VelocityServerConnection connection = p.getConnectedServer();
+          if (connection != null) {
+            counts.merge(connection.getServerInfo().getName(), 1, Integer::sum);
+          }
+        }
+        return counts;
       }
 
       @Override

@@ -55,7 +55,13 @@ class ClusterServiceTest {
   private final class FakeProxy implements ClusterService.Host {
     final Map<UUID, Long> players = new ConcurrentHashMap<>();
     final List<Object> events = new CopyOnWriteArrayList<>();
+    final Map<String, Integer> servers = new ConcurrentHashMap<>();
     ClusterService service;
+
+    @Override
+    public Map<String, Integer> localServerCounts() {
+      return Map.copyOf(servers);
+    }
 
     @Override
     public int localPlayerCount() {
@@ -200,6 +206,49 @@ class ClusterServiceTest {
     long start = System.currentTimeMillis();
     await(() -> a.service.getPlayerCount() == 3 && b.service.getPlayerCount() == 3);
     assertTrue(System.currentTimeMillis() - start < 1_000);
+  }
+
+  @Test
+  void serverCountsReachOtherProxies() throws Exception {
+    FakeProxy a = proxy("a");
+    FakeProxy b = proxy("b");
+    FakeProxy c = proxy("c");
+    a.servers.put("lobby", 3);
+    a.servers.put("survival", 1);
+    b.servers.put("lobby", 2);
+    await(() -> c.service.remotePlayerCount("lobby") == 5
+        && c.service.remotePlayerCount("SURVIVAL") == 1);
+    await(() -> a.service.remotePlayerCount("lobby") == 2); // others only
+    assertEquals(0, c.service.remotePlayerCount("creative"));
+    // plain server names stay what forwarding uses
+    assertTrue(c.service.liveRemotes().stream().filter(p -> p.id().equals("a")).findFirst()
+        .orElseThrow().servers().containsAll(List.of("lobby", "survival")));
+    a.servers.clear();
+    await(() -> c.service.remotePlayerCount("lobby") == 2);
+  }
+
+  @Test
+  void networkEventsFireOnceEverywhere() throws Exception {
+    FakeProxy a = proxy("a");
+    FakeProxy b = proxy("b");
+    UUID steve = UUID.randomUUID();
+    LoginResult r = a.login(steve, "Steve");
+    a.service.serverChanged(steve, r.session(), "lobby");
+    a.service.serverChanged(steve, r.session(), "survival");
+    a.disconnectDuplicate(steve);
+    await(() -> b.events.size() >= 4);
+    Thread.sleep(300); // nothing arrives twice
+    for (FakeProxy p : List.of(a, b)) {
+      assertEquals(List.of("NetworkPlayerJoinEvent", "NetworkPlayerServerChangeEvent",
+          "NetworkPlayerServerChangeEvent", "NetworkPlayerQuitEvent"),
+          p.events.stream().map(e -> e.getClass().getSimpleName()).toList());
+    }
+    var second = (com.velocitypowered.api.event.network.NetworkPlayerServerChangeEvent)
+        b.events.get(2);
+    assertEquals(Optional.of("lobby"), second.getPreviousServer());
+    assertEquals("b", b.service.proxyId());
+    assertEquals("a", ((com.velocitypowered.api.event.network.NetworkPlayerQuitEvent)
+        b.events.get(3)).getPlayer().getProxyId());
   }
 
   @Test

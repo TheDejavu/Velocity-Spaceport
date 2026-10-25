@@ -127,4 +127,91 @@ public interface Network {
    * @return the cached profile, if any
    */
   CompletableFuture<Optional<GameProfile>> getCachedProfile(String username);
+
+  /**
+   * Returns the number of players on a backend server across the whole network. Like
+   * {@link #getPlayerCount()} it is cached, refreshed several times a second, and never waits on
+   * the network store.
+   *
+   * @param serverName the backend server's name, ignoring case
+   * @return the players on that server on all proxies, 0 for an unknown server
+   * @since 4.3.1
+   */
+  int getPlayerCount(String serverName);
+
+  /**
+   * Returns the number of players on one proxy, as last reported.
+   *
+   * @param proxyId the proxy's id
+   * @return the players on it, 0 if there is no such live proxy
+   * @since 4.3.1
+   */
+  int getPlayerCountOnProxy(String proxyId);
+
+  /**
+   * Returns one live proxy of the network, as last seen.
+   *
+   * @param proxyId the proxy's id
+   * @return the proxy, if it is alive
+   * @since 4.3.1
+   */
+  Optional<ProxyNode> getProxy(String proxyId);
+
+  /**
+   * Lists the players on a backend server across the network. Only the proxies that have players
+   * on that server are asked; one that does not answer in time is missing.
+   *
+   * @param serverName the backend server's name, ignoring case
+   * @return the players on it
+   * @since 4.3.1
+   */
+  CompletableFuture<Collection<NetworkPlayer>> getPlayers(String serverName);
+
+  /**
+   * Lists the players of one proxy.
+   *
+   * @param proxyId the proxy's id
+   * @return its players; empty if the proxy is unknown or does not answer in time
+   * @since 4.3.1
+   */
+  CompletableFuture<Collection<NetworkPlayer>> getPlayersOnProxy(String proxyId);
+
+  /**
+   * Checks whether a player is online anywhere on the network. A single store lookup, cheaper than
+   * {@link #getPlayer(UUID)}.
+   *
+   * @param uuid the player's uuid
+   * @return true if the player is online
+   * @since 4.3.1
+   */
+  CompletableFuture<Boolean> isOnline(UUID uuid);
+
+  /**
+   * Checks whether a player is online anywhere on the network, by name, ignoring case.
+   *
+   * @param username the player's name
+   * @return true if the player is online
+   * @since 4.3.1
+   */
+  CompletableFuture<Boolean> isOnline(String username);
+
+  /**
+   * Finds a player's uuid by name, ignoring case. Looks at players online now, then at the shared
+   * profile cache, then at the last-seen records, so it also finds players that left some time
+   * ago. Without a network, only this proxy's players and the players it has seen are known.
+   *
+   * @param username the player's name
+   * @return the uuid, if the name is known
+   * @since 4.3.1
+   */
+  CompletableFuture<Optional<UUID>> getUniqueId(String username);
+
+  /**
+   * Finds a player's name by uuid, with the same sources as {@link #getUniqueId(String)}.
+   *
+   * @param uuid the player's uuid
+   * @return the name as last used, if the player is known
+   * @since 4.3.1
+   */
+  CompletableFuture<Optional<String>> getUsername(UUID uuid);
 }
