@@ -55,6 +55,29 @@ player:
 | 2,500 | saturated at about 2,400 players (16 cores, commands take 0.5 s) | 4.3 cores |
 | 5,000 | saturated, logins time out | 9.5 cores, 2.3 M packets/s |
 
+## Network (multi-proxy)
+
+Run 2-5 proxies behind a load balancer as one network: one shared player list (counts, `/find`, `/send`, `/glist`, plugin messages), one login per player across all proxies, and restarts without losing players. A proxy that drains signs a short-lived ticket for each player and transfers them to the balancer address (1.20.5+ clients, no second Mojang check); older clients get a reconnect message. A crashed proxy's players are sent back to their last server when they reconnect.
+
+Off by default (`enabled = false`); a single proxy behaves as before. Needs Redis, and for failover **Redis Sentinel** (a plain Redis works but is a single point of failure). Enable it on every proxy, with its own `proxy-id`:
+
+```toml
+accepts-transfers = true            # top level, on every proxy
+
+[network]
+enabled = true
+proxy-id = "proxy-1"
+redis-uri = "redis-sentinel://password@host1:26379,host2:26379,host3:26379/0#mymaster"
+health-bind = "127.0.0.1:25890"
+transfer-host = "play.example.com"  # the load balancer address
+transfer-port = 25565
+transfer-secret-file = "network-secret.key"   # same file on every proxy
+```
+
+All keys are documented in `velocity.toml`. Point the balancer's health check at `/health/ready`; `/health/live` and `/metrics` (Prometheus) are on the same `health-bind` listener.
+
+To restart a proxy, run `/spaceport drain` on its console: it turns not-ready, transfers its players to the balancer, and the proxy can then be stopped (a normal shutdown drains too). `/spaceport drain cancel` aborts, `/spaceport network` shows the proxies and players per proxy.
+
 ## Upstream pull requests included early
 
 Dropped once upstream merges them.
