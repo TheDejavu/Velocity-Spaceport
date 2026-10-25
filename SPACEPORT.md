@@ -124,7 +124,7 @@ Network events have one limit: a proxy that crashes does not send leave events f
 
 ### Shared login rate limit
 
-Off by default. With `login-rate-limit = true` one address may start at most `login-rate-max` logins (default 20) per `login-rate-window` seconds (default 60), counted across all proxies, so a bot cannot get a fresh allowance by hitting each proxy in turn. It is checked right after the login packet, before the Mojang check, and does not replace Velocity's own `login-ratelimit`. Extra logins are refused with a "too many login attempts" message. The counter is in Redis and asked without blocking; if Redis is unreachable or slow the limit is skipped and logins go through. Refusals show up as `spaceport_login_rate_limited_total`. Do not set it too low for players who share an address.
+Off by default. With `login-rate-limit = true` one address may start at most `login-rate-max` logins (default 20) per `login-rate-window` seconds (default 60), counted across all proxies (with the Redis store; with `store = "local"` it is per proxy), so a bot cannot get a fresh allowance by hitting each proxy in turn. It is checked right after the login packet, before the Mojang check, and does not replace Velocity's own `login-ratelimit`. Extra logins are refused with a "too many login attempts" message. The counter is in Redis and asked without blocking; if Redis is unreachable or slow the limit is skipped and logins go through. Refusals show up as `spaceport_login_rate_limited_total`. IPv6 addresses are counted by their /64 prefix. Do not set it too low for players who share an address.
 
 ### Metrics and dashboard
 
