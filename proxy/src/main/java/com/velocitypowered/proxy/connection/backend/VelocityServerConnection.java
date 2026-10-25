@@ -24,6 +24,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.base.Preconditions;
 import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolVersion;
+import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.PluginMessageEncoder;
@@ -38,6 +39,7 @@ import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.connection.PlayerDataForwarding;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.forge.modern.ModernForgeConnectionType;
+import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.packet.HandshakePacket;
@@ -70,6 +72,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
   private boolean hasCompletedJoin = false;
   private boolean clientLoaded = false; // 1.21.4+
   private boolean gracefulDisconnect = false;
+  private volatile boolean cancelled = false;
   private BackendConnectionPhase connectionPhase = BackendConnectionPhases.UNKNOWN;
   private final Map<Long, Long> pendingPings = new HashMap<>();
   private @MonotonicNonNull Integer entityId;
@@ -105,7 +108,13 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
         .handler(server.getBackendChannelInitializer())
         .connect(registeredServer.getServerInfo().getAddress())
         .addListener((ChannelFutureListener) future -> {
-          if (future.isSuccess()) {
+          if (future.isSuccess() && (cancelled || !proxyPlayer.isActive())) {
+            // The player left (or this attempt was torn down) while the TCP connect was pending;
+            // do not log in to the backend for a player that is gone.
+            future.channel().close();
+            result.complete(ConnectionRequestResults.plainResult(
+                ConnectionRequestBuilder.Status.CONNECTION_CANCELLED, registeredServer));
+          } else if (future.isSuccess()) {
             connection = new MinecraftConnection(future.channel(), server,
                 proxyPlayer.getConnection().getSessionId());
             connection.setAssociation(VelocityServerConnection.this);
@@ -246,6 +255,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
    * Disconnects from the server.
    */
   public void disconnect() {
+    cancelled = true;
     if (connection != null) {
       gracefulDisconnect = true;
       connection.close(false);
