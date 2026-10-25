@@ -121,7 +121,9 @@ public final class ConnectionManager {
       bootstrap.option(ChannelOption.TCP_FASTOPEN, 3);
     }
 
-    if (server.getConfiguration().isEnableReusePort()) {
+    final boolean reusePort = reusePort(server.getConfiguration().isEnableReusePort(),
+        this.transportType);
+    if (reusePort) {
       // We don't need a boss group, since each worker will bind to the socket
       bootstrap.option(UnixChannelOption.SO_REUSEPORT, true)
           .group(this.workerGroup);
@@ -129,7 +131,7 @@ public final class ConnectionManager {
       bootstrap.group(this.bossGroup, this.workerGroup);
     }
 
-    final int binds = server.getConfiguration().isEnableReusePort()
+    final int binds = reusePort
         ? ((MultithreadEventExecutorGroup) this.workerGroup).executorCount() : 1;
 
     for (int bind = 0; bind < binds; bind++) {
@@ -214,6 +216,24 @@ public final class ConnectionManager {
       bootstrap.option(ChannelOption.TCP_FASTOPEN_CONNECT, true);
     }
     return bootstrap;
+  }
+
+  /**
+   * Decides whether to bind with SO_REUSEPORT. With it a second proxy process can bind the same
+   * port while the first one drains (restarts without a refused connection). Only the native
+   * transports support it; NIO ignores it.
+   *
+   * @param enabled the {@code enable-reuse-port} setting
+   * @param type the transport in use
+   * @return whether to set SO_REUSEPORT
+   */
+  static boolean reusePort(boolean enabled, TransportType type) {
+    if (enabled && type == TransportType.NIO) {
+      LOGGER.warn("enable-reuse-port is ignored: it needs a native transport (epoll, kqueue or "
+          + "io_uring), this proxy uses NIO");
+      return false;
+    }
+    return enabled;
   }
 
   /**

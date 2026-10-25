@@ -163,7 +163,8 @@ accepts-transfers = false
 # Enables support for SO_REUSEPORT. This may help the proxy scale better on multicore systems
 # with a lot of incoming connections, and provide better CPU utilization than the existing
 # strategy of having a single thread accepting connections and distributing them to worker
-# threads. Disabled by default. Requires Linux or macOS.
+# threads. Disabled by default. Requires Linux or macOS (ignored, with a log note, on NIO).
+# It also lets a new proxy process bind the same port while the old one is still draining.
 enable-reuse-port = false
 
 # How fast (in milliseconds) are clients allowed to send commands after the last command
