@@ -222,7 +222,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.permissionFunction = PermissionFunction.ALWAYS_UNDEFINED;
     this.connectionPhase = connection.getType().getInitialClientPhase();
     this.onlineMode = onlineMode;
-    this.account = LoginGate.untilAuthMe(profile.getId());
+    this.account = LoginGate.start(server.getConfiguration().getNetworkConfig().loginGate(),
+        profile.getId());
     this.clientsideChannels = CappedSet.create(MAX_CLIENTSIDE_PLUGIN_CHANNELS);
 
     if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {

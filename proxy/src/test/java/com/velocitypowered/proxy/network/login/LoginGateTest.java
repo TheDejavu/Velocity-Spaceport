@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.network.login.LoginGate.Decision;
 import com.velocitypowered.proxy.network.login.LoginGate.MojangName;
 import com.velocitypowered.proxy.network.login.LoginGate.PublicAction;
@@ -153,5 +154,35 @@ class LoginGateTest {
     Session session = LoginGate.admit(MojangName.FREE, false, MOJANG, OFFLINE, CLIENT, true, false);
     assertFalse(session.open());
     return session;
+  }
+
+  @Test
+  void networkWithoutALoginBackendNeverLocksTheSwitch() {
+    Session session = LoginGate.start(false, OFFLINE);
+    assertTrue(session.open());
+    assertEquals(Decision.ALLOW, LoginGate.attempt(session, PublicAction.SERVER_SWITCH));
+    assertEquals(Decision.DROP, LoginGate.attempt(session, PublicAction.UNSIGNED_FORCE_LOGIN));
+    assertEquals(OFFLINE, session.playerId());
+    assertNull(LoginGate.start(false, null));
+  }
+
+  @Test
+  void gatedNetworkStaysClosedUntilTheBackendReportsTheLogin() {
+    Session session = LoginGate.start(true, OFFLINE);
+    assertFalse(session.open());
+    assertEquals(Decision.DROP, LoginGate.attempt(session, PublicAction.SERVER_SWITCH));
+    LoginGate.authMeLoggedIn(session);
+    assertEquals(Decision.ALLOW, LoginGate.attempt(session, PublicAction.SERVER_SWITCH));
+  }
+
+  @Test
+  void loginGateIsOffByDefaultAndReadFromConfig() {
+    assertFalse(VelocityConfiguration.NetworkConfig.DEFAULT.loginGate());
+    assertFalse(VelocityConfiguration.NetworkConfig.fromConfig(
+        com.electronwill.nightconfig.core.CommentedConfig.inMemory()).loginGate());
+    com.electronwill.nightconfig.core.CommentedConfig on =
+        com.electronwill.nightconfig.core.CommentedConfig.inMemory();
+    on.set("login-gate", true);
+    assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(on).loginGate());
   }
 }

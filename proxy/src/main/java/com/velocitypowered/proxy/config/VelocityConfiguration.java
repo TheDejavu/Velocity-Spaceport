@@ -1081,6 +1081,8 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param bedrockPrefix name prefix Floodgate gives Bedrock players, skipped by the Mojang check
    * @param loginLobbies servers a player is moved to after the account is accepted; empty leaves
    *     them on the server they logged in on
+   * @param loginGate whether a player stays locked to the server they joined until a backend
+   *     (AuthMe) reports the login; leave off on a network without such a backend
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
@@ -1092,11 +1094,11 @@ public class VelocityConfiguration implements ProxyConfig {
                               boolean loginRateLimit, int loginRateMax, int loginRateWindow,
                               int lastSeenTtl, int loginWaveMax,
                               String bedrockHost, int bedrockPort, String bedrockPrefix,
-                              List<String> loginLobbies) {
+                              List<String> loginLobbies, boolean loginGate) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
         "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50,
         "network-secret.key", true, 21600, 300, false, false, 43200, false, 20, 60, 30, 0,
-        "", 19132, ".", List.of());
+        "", 19132, ".", List.of(), false);
 
     /** Without the login rate limit settings (off). */
     public NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
@@ -1109,7 +1111,7 @@ public class VelocityConfiguration implements ProxyConfig {
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
           drainWaitForSave, authOutageMode, authOutageWindow, false, 20, 60, 30, 0,
-          "", 19132, ".", List.of());
+          "", 19132, ".", List.of(), false);
     }
 
     /** Without the login wave cap (off). */
@@ -1124,7 +1126,7 @@ public class VelocityConfiguration implements ProxyConfig {
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
           drainWaitForSave, authOutageMode, authOutageWindow, loginRateLimit, loginRateMax,
-          loginRateWindow, lastSeenTtl, 0, "", 19132, ".", List.of());
+          loginRateWindow, lastSeenTtl, 0, "", 19132, ".", List.of(), false);
     }
 
     /** Without the last-seen retention (30 days). */
@@ -1139,7 +1141,7 @@ public class VelocityConfiguration implements ProxyConfig {
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
           drainWaitForSave, authOutageMode, authOutageWindow, loginRateLimit, loginRateMax,
-          loginRateWindow, 30, 0, "", 19132, ".", List.of());
+          loginRateWindow, 30, 0, "", 19132, ".", List.of(), false);
     }
 
     /**
@@ -1219,7 +1221,8 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("bedrock-host", DEFAULT.bedrockHost()),
           config.getIntOrElse("bedrock-port", DEFAULT.bedrockPort()),
           config.getOrElse("bedrock-prefix", DEFAULT.bedrockPrefix()),
-          config.getOrElse("login-lobbies", DEFAULT.loginLobbies()));
+          config.getOrElse("login-lobbies", DEFAULT.loginLobbies()),
+          config.getOrElse("login-gate", DEFAULT.loginGate()));
     }
   }
 }

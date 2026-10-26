@@ -98,6 +98,25 @@ public final class LoginGate {
     return new Session(false, false, true, false, playerId);
   }
 
+  /** No login backend: the session starts open, so nothing waits for AuthMe. */
+  public static Session ungated(UUID playerId) {
+    if (playerId == null) {
+      return null;
+    }
+    return new Session(true, false, true, false, playerId);
+  }
+
+  /**
+   * The session a new connection starts with.
+   *
+   * @param gated whether the network runs a login backend that opens the session
+   * @param playerId the player's id
+   * @return a session locked until AuthMe logs in, or an open one
+   */
+  public static Session start(boolean gated, UUID playerId) {
+    return gated ? untilAuthMe(playerId) : ungated(playerId);
+  }
+
   /** AuthMe on the backend accepted this player. */
   public static Decision authMeLoggedIn(Session session) {
     if (session == null) {
