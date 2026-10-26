@@ -186,7 +186,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private long ping = -1;
   private final boolean onlineMode;
   private final LoginGate.Session account;
-  private boolean onAServer;
+  private boolean joinedServer;
   private volatile boolean enteredLobby;
   private final AtomicBoolean searchingLobby = new AtomicBoolean();
   private @Nullable VelocityServerConnection connectedServer;
@@ -933,7 +933,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       tryList.addAll(serversToTry);
     }
     String name = target == null ? null : target.getServerInfo().getName();
-    return LoginGate.mayMove(account, onAServer, proxyFailover, name, tryList,
+    return LoginGate.mayMove(account, joinedServer, proxyFailover, name, tryList,
         server.getConfiguration().getNetworkConfig().loginLobbies());
   }
 
@@ -995,7 +995,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   public void setConnectedServer(@Nullable VelocityServerConnection serverConnection) {
     this.connectedServer = serverConnection;
     if (serverConnection != null) {
-      this.onAServer = true;
+      this.joinedServer = true;
     }
     ClusterService cluster = server.getCluster();
     if (cluster != null && serverConnection != null && networkSession != 0) {

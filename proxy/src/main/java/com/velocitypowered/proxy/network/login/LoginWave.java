@@ -34,6 +34,7 @@ public final class LoginWave {
     this.maxPerSecond = Math.max(0, maxPerSecond);
   }
 
+  /** Whether one more login handshake fits in this second. */
   public boolean allow(long nowMillis) {
     if (maxPerSecond == 0) {
       return true;

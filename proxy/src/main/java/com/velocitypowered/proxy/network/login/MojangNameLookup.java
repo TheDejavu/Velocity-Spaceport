@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MojangNameLookup {
 
+  /** What Mojang says about a name. */
   public enum Ownership {
     OWNS,
     FREE,
@@ -53,6 +54,7 @@ public final class MojangNameLookup {
     return RATE_LIMITED.get();
   }
 
+  /** Maps a Mojang profile lookup status to an answer. */
   public static Ownership decide(int status) {
     if (status == 200) {
       return Ownership.OWNS;
@@ -91,6 +93,7 @@ public final class MojangNameLookup {
     return host != null && !host.isEmpty() && bedrockName(name, prefix);
   }
 
+  /** Asks Mojang whether a name is owned. */
   public static CompletableFuture<Ownership> lookup(HttpClient client, String name) {
     if (name == null || !name.matches("[A-Za-z0-9_]{1,16}")) {
       return CompletableFuture.completedFuture(Ownership.SILENT);

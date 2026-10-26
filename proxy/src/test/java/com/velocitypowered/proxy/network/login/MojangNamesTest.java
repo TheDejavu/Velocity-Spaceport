@@ -47,7 +47,7 @@ class MojangNamesTest {
   }
 
   @Test
-  void aClearAnswerIsCachedCaseInsensitively() {
+  void clearAnswerIsCachedCaseInsensitively() {
     assertEquals(Ownership.OWNS, ask("Notch", CompletableFuture.completedFuture(Ownership.OWNS)));
     assertEquals(Ownership.OWNS, names.lookup("NOTCH").join());
     assertEquals(Ownership.OWNS, names.lookup("notch").join());
@@ -57,7 +57,7 @@ class MojangNamesTest {
   }
 
   @Test
-  void aFreeNameIsRememberedOnlyBrieflyAndAnOwnedNameLonger() {
+  void freeNameIsRememberedOnlyBrieflyAndOwnedNameLonger() {
     ask("a", CompletableFuture.completedFuture(Ownership.FREE));
     ask("b", CompletableFuture.completedFuture(Ownership.OWNS));
     nanos.addAndGet(Duration.ofMinutes(4).toNanos());
@@ -86,7 +86,7 @@ class MojangNamesTest {
   }
 
   @Test
-  void aNullNameIsSilent() {
+  void nullNameIsSilent() {
     assertEquals(Ownership.SILENT, names.lookup(null).join());
     assertEquals(0, asked);
   }
@@ -98,7 +98,7 @@ class MojangNamesTest {
   }
 
   @Test
-  void aThrowingOrNullBackendIsSilentNotAnError() {
+  void throwingOrNullBackendIsSilentNotAnError() {
     MojangNames throwing = new MojangNames(client, name -> {
       throw new IllegalStateException("boom");
     }, () -> 0, () -> 0);

@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
 class LoginWaveTest {
 
   @Test
-  void turnedOffAcceptsAWave() {
+  void turnedOffAcceptsWave() {
     LoginWave wave = new LoginWave(0);
     for (int i = 0; i < 50_000; i++) {
       assertTrue(wave.allow(1_000));
@@ -33,7 +33,7 @@ class LoginWaveTest {
   }
 
   @Test
-  void aSecondOnlyAdmitsItsBudget() {
+  void eachSecondOnlyAdmitsItsBudget() {
     LoginWave wave = new LoginWave(3);
     assertTrue(wave.allow(5_100));
     assertTrue(wave.allow(5_200));

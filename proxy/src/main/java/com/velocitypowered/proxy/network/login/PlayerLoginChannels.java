@@ -28,6 +28,7 @@ public final class PlayerLoginChannels {
   private PlayerLoginChannels() {
   }
 
+  /** Whether a client may send on this channel. */
   public static boolean fromTheClient(String channel) {
     if (channel == null) {
       return false;

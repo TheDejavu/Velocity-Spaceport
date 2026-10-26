@@ -135,7 +135,7 @@ final class TransferDrain {
         transfer(next);
         return;
       }
-      if (waitingForAGeyser()) {
+      if (waitingForGeyser()) {
         return;
       }
       // Everyone who can be transferred has been; the rest cannot (D6).
@@ -175,7 +175,7 @@ final class TransferDrain {
   }
 
   /** A Bedrock player waits briefly for another proxy's Geyser to show up in the network. */
-  private boolean waitingForAGeyser() {
+  private boolean waitingForGeyser() {
     if (!handoff.available() || config().bedrockHost().isEmpty() || cluster.bedrockTarget() != null) {
       noBedrockTargetSince = 0;
       return false;

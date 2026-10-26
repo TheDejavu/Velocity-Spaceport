@@ -34,6 +34,7 @@ public final class PremiumProof {
   private PremiumProof() {
   }
 
+  /** Marks a profile as Mojang verified. */
   public static GameProfile stamp(GameProfile profile) {
     if (carries(profile)) {
       return profile;
@@ -43,6 +44,7 @@ public final class PremiumProof {
     return profile.withProperties(properties);
   }
 
+  /** Whether a profile carries the premium mark. */
   public static boolean carries(GameProfile profile) {
     for (GameProfile.Property property : profile.getProperties()) {
       if (PROPERTY.equals(property.getName()) && PRESENT.equals(property.getValue())) {

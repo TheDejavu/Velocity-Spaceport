@@ -45,8 +45,8 @@ import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResource
 import com.velocitypowered.proxy.connection.player.resourcepack.handler.ResourcePackHandler;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.network.BackendChannelInitializer;
-import com.velocitypowered.proxy.network.login.LoginGate;
 import com.velocitypowered.proxy.network.Connections;
+import com.velocitypowered.proxy.network.login.LoginGate;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;

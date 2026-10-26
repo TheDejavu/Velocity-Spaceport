@@ -53,6 +53,7 @@ public final class LoginGate {
     CLIENT_UUID
   }
 
+  /** What the gate does with a packet. */
   public enum Decision {
     ALLOW,
     DROP,
@@ -206,6 +207,7 @@ public final class LoginGate {
     return Decision.ALLOW;
   }
 
+  /** One player's login state. */
   public static final class Session {
     private boolean open;
     private final boolean premiumVerified;

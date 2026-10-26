@@ -80,7 +80,7 @@ class LoginGateTest {
   }
 
   @Test
-  void mojangSilenceOrAFailedPaidLoginKicks() {
+  void mojangSilenceOrFailedPaidLoginKicks() {
     assertNull(LoginGate.admit(MojangName.SILENT, false, MOJANG, OFFLINE, CLIENT, false, false));
     assertNull(LoginGate.admit(MojangName.SILENT, true, MOJANG, OFFLINE, CLIENT, true, true));
     assertNull(LoginGate.admit(MojangName.OWNS, false, MOJANG, OFFLINE, CLIENT, true, false));
@@ -92,7 +92,7 @@ class LoginGateTest {
     Session paid = existingPaid();
     Session cracked = existingCracked();
     Session freshPaid = LoginGate.admit(MojangName.OWNS, true, MOJANG, OFFLINE, CLIENT, false, false);
-    Session freshCracked = LoginGate.admit(MojangName.FREE, false, MOJANG, OFFLINE, CLIENT, false, false);
+    final Session freshCracked = LoginGate.admit(MojangName.FREE, false, MOJANG, OFFLINE, CLIENT, false, false);
     assertNotEquals(CLIENT, paid.playerId());
     assertNotEquals(CLIENT, cracked.playerId());
     assertEquals(MOJANG, freshPaid.playerId());
@@ -128,7 +128,7 @@ class LoginGateTest {
   }
 
   @Test
-  void newPaidAccountOpensWithoutAPassword() {
+  void newPaidAccountOpensWithoutPassword() {
     Session fresh = LoginGate.admit(MojangName.OWNS, true, MOJANG, OFFLINE, CLIENT, false, false);
     assertTrue(fresh.open());
     assertTrue(fresh.premiumVerified());
@@ -159,7 +159,7 @@ class LoginGateTest {
   }
 
   @Test
-  void networkWithoutALoginBackendNeverLocksTheSwitch() {
+  void networkWithoutLoginBackendNeverLocksTheSwitch() {
     Session session = LoginGate.start(false, OFFLINE);
     assertTrue(session.open());
     assertEquals(Decision.ALLOW, LoginGate.attempt(session, PublicAction.SERVER_SWITCH));
@@ -202,7 +202,7 @@ class LoginGateTest {
   }
 
   @Test
-  void playerAndPluginMovesStayBlockedEvenToATryListServer() {
+  void playerAndPluginMovesStayBlockedEvenToTryListServer() {
     List<String> tryList = List.of("auth-1", "auth-2");
     Session locked = LoginGate.untilAuthMe(OFFLINE);
     assertFalse(LoginGate.mayMove(locked, true, false, "auth-2", tryList, LOBBIES));
@@ -218,7 +218,7 @@ class LoginGateTest {
   }
 
   @Test
-  void aMainLobbyIsNeverAFailoverTargetBeforeLogin() {
+  void mainLobbyIsNeverFailoverTargetBeforeLogin() {
     Session locked = LoginGate.untilAuthMe(OFFLINE);
     assertFalse(LoginGate.mayMove(locked, true, true, "lobby", List.of("auth-1", "lobby"), LOBBIES));
     assertTrue(LoginGate.mayMove(locked, true, true, "auth-1", List.of("auth-1", "lobby"), LOBBIES));
@@ -235,7 +235,7 @@ class LoginGateTest {
   }
 
   @Test
-  void aDestinationChangedByAPluginIsGatedByWhereItReallyGoes() {
+  void destinationChangedByPluginIsGatedByWhereItReallyGoes() {
     // The check runs again on the final destination with the same failover flag.
     List<String> tryList = List.of("auth-1", "auth-2");
     Session locked = LoginGate.untilAuthMe(OFFLINE);

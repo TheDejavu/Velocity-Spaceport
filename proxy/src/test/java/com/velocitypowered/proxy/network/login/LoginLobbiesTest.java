@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
 class LoginLobbiesTest {
 
   @Test
-  void aPlayerOnAMainLobbyStaysThere() {
+  void playerOnMainLobbyStaysThere() {
     List<String> lobbies = List.of("lobby-1", "lobby-2");
     assertTrue(LoginLobbies.staying("lobby-2", lobbies));
     assertTrue(LoginLobbies.staying("LOBBY-1", lobbies));
@@ -95,7 +95,7 @@ class LoginLobbiesTest {
   }
 
   @Test
-  void searchSucceedsOnALaterRound() {
+  void searchSucceedsOnLaterRound() {
     Set<String> up = new HashSet<>();
     Run run = new Run(List.of("lobby-1"), up);
     run.search.start();
@@ -106,7 +106,7 @@ class LoginLobbiesTest {
   }
 
   @Test
-  void aPlayerWhoLeftIsNotSearchedFor() {
+  void playerWhoLeftIsNotSearchedFor() {
     Run run = new Run(List.of("lobby-1"), Set.of());
     run.search.start();
     run.active = false;
@@ -117,7 +117,7 @@ class LoginLobbiesTest {
   }
 
   @Test
-  void aThrowingMoverCountsAsAFailureAndTheNextLobbyIsTried() {
+  void throwingMoverCountsAsFailureAndTheNextLobbyIsTried() {
     List<String> asked = new ArrayList<>();
     int[] outcome = new int[2];
     new LoginLobbies.Search(List.of("a", "b"), name -> {
@@ -134,7 +134,7 @@ class LoginLobbiesTest {
   }
 
   @Test
-  void aMoverThatFailsEverywhereGivesUpOnceEvenIfSchedulingIsRefused() {
+  void moverThatFailsEverywhereGivesUpOnceEvenIfSchedulingIsRefused() {
     int[] outcome = new int[2];
     new LoginLobbies.Search(List.of("a"), name -> {
       throw new IllegalStateException("boom");
@@ -146,7 +146,7 @@ class LoginLobbiesTest {
   }
 
   @Test
-  void aNullFutureIsAFailureAndAGonePlayerGetsNoGiveUp() {
+  void nullFutureIsFailureAndGonePlayerGetsNoGiveUp() {
     int[] outcome = new int[2];
     boolean[] active = {true};
     new LoginLobbies.Search(List.of("a"), name -> {

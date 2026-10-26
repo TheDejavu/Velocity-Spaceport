@@ -37,7 +37,7 @@ class PremiumLoginTest {
   private static final UUID ID = UUID.fromString("853c80ef-3c37-49fd-aa49-938b674adae6");
 
   @Test
-  void silenceIsNotAFreeName() {
+  void silenceIsNotFreeName() {
     assertEquals(Ownership.OWNS, MojangNameLookup.decide(200));
     assertEquals(Ownership.FREE, MojangNameLookup.decide(204));
     assertEquals(Ownership.FREE, MojangNameLookup.decide(404));
@@ -54,7 +54,7 @@ class PremiumLoginTest {
   }
 
   @Test
-  void stampOnlyMarksAProfileThatAlreadyPassedMojang() {
+  void stampOnlyMarksProfileThatAlreadyPassedMojang() {
     GameProfile plain = new GameProfile(ID, "Notch", List.of());
     assertFalse(PremiumProof.carries(plain));
     GameProfile stamped = PremiumProof.stamp(plain);
@@ -82,7 +82,7 @@ class PremiumLoginTest {
   }
 
   @Test
-  void aClientCannotHandTheProxyAFastLoginChannel() {
+  void clientCannotHandTheProxyFastLoginChannel() {
     assertTrue(PlayerLoginChannels.fromTheClient("fastlogin:force"));
     assertTrue(PlayerLoginChannels.fromTheClient("FastLogin:force"));
     assertTrue(PlayerLoginChannels.fromTheClient("spaceport:account"));

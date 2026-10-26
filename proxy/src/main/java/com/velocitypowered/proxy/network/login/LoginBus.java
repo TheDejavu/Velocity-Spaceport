@@ -43,6 +43,7 @@ public final class LoginBus {
   private LoginBus() {
   }
 
+  /** Logs premium logins shared by other proxies. */
   public static void listen(PluginMessenger messenger) {
     messenger.registerInternal(CHANNEL, (channel, from, payload) -> {
       String name = nameOf(payload);
@@ -52,6 +53,7 @@ public final class LoginBus {
     });
   }
 
+  /** Shares a premium login with the other proxies. */
   public static void tell(VelocityServer server, GameProfile profile) {
     NetworkMessenger messenger = server.getNetwork().getMessenger();
     messenger.broadcast(CHANNEL, payload(profile)).exceptionally(error -> {
