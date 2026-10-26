@@ -7,6 +7,14 @@
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_ACCOUNTS",
+      "label": "Accounts",
+      "description": "MariaDB with the AuthMe and Spaceport account tables",
+      "type": "datasource",
+      "pluginId": "mysql",
+      "pluginName": "MySQL"
     }
   ],
   "__requires": [
@@ -21,6 +29,12 @@
       "id": "prometheus",
       "name": "Prometheus",
       "version": "1.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "mysql",
+      "name": "MySQL",
+      "version": "1.0.0"
     }
   ],
   "title": "Spaceport network",
@@ -30,7 +44,7 @@
     "minecraft"
   ],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "timezone": "browser",
   "refresh": "10s",
@@ -39,6 +53,964 @@
     "to": "now"
   },
   "panels": [
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Proxies",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Proxy health",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "spaceport_ready{job=~\"$job\"}",
+          "legendFormat": "{{proxy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Proxy draining",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "spaceport_draining{job=~\"$job\"}",
+          "legendFormat": "{{proxy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Players on each proxy",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "spaceport_players_local{job=~\"$job\"}",
+          "legendFormat": "{{proxy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Players on each proxy",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "spaceport_players_local{job=~\"$job\"}",
+          "legendFormat": "{{proxy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Backends and lobbies",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Auth limbos",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (server) (spaceport_server_up{job=~\"$job\",server=~\"auth-.*\"})",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Lobbies",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 14,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (server) (spaceport_server_up{job=~\"$job\",server=~\"lobby-.*\"})",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "Other backends",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 14,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (server) (spaceport_server_up{job=~\"$job\",server!~\"auth-.*|lobby-.*\"})",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 27,
+      "type": "bargauge",
+      "title": "Players in auth limbos",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (server) (spaceport_server_players{job=~\"$job\",server=~\"auth-.*\"})",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 28,
+      "type": "bargauge",
+      "title": "Players in lobbies",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (server) (spaceport_server_players{job=~\"$job\",server=~\"lobby-.*\"})",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 29,
+      "type": "row",
+      "title": "Who is online",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "Premium online",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"premium\"})",
+          "legendFormat": "premium"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Cracked online",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 27,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"cracked\"})",
+          "legendFormat": "cracked"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Bedrock online",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 27,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"bedrock\"})",
+          "legendFormat": "bedrock"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Online players by type",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"premium\"})",
+          "legendFormat": "premium"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"cracked\"})",
+          "legendFormat": "cracked"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(spaceport_players_kind{job=~\"$job\",kind=\"bedrock\"})",
+          "legendFormat": "bedrock"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 34,
+      "type": "row",
+      "title": "Accounts",
+      "gridPos": {
+        "x": 0,
+        "y": 84,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 35,
+      "type": "table",
+      "title": "Registered",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT realname AS name, CASE WHEN regdate > 1000000000000 THEN FROM_UNIXTIME(regdate / 1000) WHEN regdate > 0 THEN FROM_UNIXTIME(regdate) ELSE NULL END AS registered, regip AS registered_from FROM authme ORDER BY regdate DESC LIMIT 20",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": "table",
+      "title": "Addresses shared by more than one account",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 85,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT address, COUNT(*) AS accounts, GROUP_CONCAT(name ORDER BY name SEPARATOR ', ') AS names FROM spaceport_address GROUP BY address HAVING COUNT(*) > 1 ORDER BY accounts DESC LIMIT 30",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 37,
+      "type": "table",
+      "title": "This account",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 93,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT a.realname AS name, CASE WHEN a.regdate > 1000000000000 THEN FROM_UNIXTIME(a.regdate / 1000) WHEN a.regdate > 0 THEN FROM_UNIXTIME(a.regdate) ELSE NULL END AS registered, a.regip AS registered_from, CASE WHEN a.lastlogin > 1000000000000 THEN FROM_UNIXTIME(a.lastlogin / 1000) WHEN a.lastlogin > 0 THEN FROM_UNIXTIME(a.lastlogin) ELSE NULL END AS last_login, a.ip AS last_address, CASE WHEN p.name IS NULL THEN 'no' ELSE 'yes' END AS premium, CASE WHEN t.name IS NULL THEN 'no' ELSE 'yes' END AS staff_second_factor FROM authme a LEFT JOIN spaceport_premium p ON p.name = a.realname LEFT JOIN spaceport_totp t ON t.name = a.realname WHERE a.realname = ${player:sqlstring} OR a.username = LOWER(${player:sqlstring}) LIMIT 5",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 38,
+      "type": "table",
+      "title": "Address history",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 99,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT address, first_seen, last_seen FROM spaceport_address WHERE name = ${player:sqlstring} ORDER BY last_seen DESC LIMIT 20",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 39,
+      "type": "table",
+      "title": "Notes",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 99,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT id, author, written_at, body FROM spaceport_note WHERE subject = ${player:sqlstring} ORDER BY id DESC LIMIT 20",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 40,
+      "type": "table",
+      "title": "Other accounts on the same addresses",
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_ACCOUNTS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 107,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "${DS_ACCOUNTS}"
+          },
+          "format": "table",
+          "rawSql": "SELECT other.name AS account, other.address, other.first_seen, other.last_seen FROM spaceport_address mine JOIN spaceport_address other ON other.address = mine.address AND other.name <> mine.name WHERE mine.name = ${player:sqlstring} ORDER BY other.last_seen DESC LIMIT 30",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
     {
       "id": 1,
       "type": "stat",
@@ -49,7 +1021,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -90,7 +1062,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -131,7 +1103,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -172,7 +1144,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -213,7 +1185,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -270,7 +1242,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 0,
+        "y": 40,
         "w": 4,
         "h": 4
       },
@@ -327,7 +1299,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 44,
         "w": 12,
         "h": 8
       },
@@ -367,7 +1339,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 44,
         "w": 12,
         "h": 8
       },
@@ -406,7 +1378,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 52,
         "w": 12,
         "h": 8
       },
@@ -456,7 +1428,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 52,
         "w": 12,
         "h": 8
       },
@@ -498,7 +1470,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 60,
         "w": 12,
         "h": 8
       },
@@ -539,7 +1511,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 60,
         "w": 12,
         "h": 8
       },
@@ -589,7 +1561,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 68,
         "w": 8,
         "h": 8
       },
@@ -630,7 +1602,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 28,
+        "y": 68,
         "w": 8,
         "h": 8
       },
@@ -678,7 +1650,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 28,
+        "y": 68,
         "w": 8,
         "h": 8
       },
@@ -737,7 +1709,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 76,
         "w": 12,
         "h": 8
       },
@@ -787,7 +1759,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 76,
         "w": 12,
         "h": 8
       },
@@ -843,10 +1815,28 @@
           "value": "$__all"
         },
         "sort": 1
+      },
+      {
+        "name": "player",
+        "type": "textbox",
+        "label": "Player",
+        "query": "cvbot000000",
+        "current": {
+          "text": "cvbot000000",
+          "value": "cvbot000000"
+        },
+        "options": [
+          {
+            "text": "cvbot000000",
+            "value": "cvbot000000",
+            "selected": true
+          }
+        ]
       }
     ]
   },
   "annotations": {
     "list": []
-  }
+  },
+  "description": "Proxy and backend health, lobby counts, who is online, and one account at a time."
 }
