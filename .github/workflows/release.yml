@@ -1,9 +1,9 @@
 name: Build and release
 
+# Like Velocity's downloads: every push to spaceport is a numbered build with the proxy jar attached.
 on:
   push:
     branches: [spaceport]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -24,19 +24,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - name: Build
         run: ./gradlew build
-      - name: Pick the proxy jar
+      - name: Name the proxy jar
         run: |
+          version=$(sed -n 's/^version=//p' gradle.properties)
           jar=$(ls proxy/build/libs/*.jar | grep -vE -- '-(sources|javadoc|plain)\.jar$' | xargs ls -S | head -1)
-          cp "$jar" spaceport.jar
+          mkdir out && cp "$jar" "out/spaceport-$version-$GITHUB_RUN_NUMBER.jar"
+          echo "$version" > out/version.txt
       - uses: actions/upload-artifact@v4
         with:
           name: spaceport-jar
-          path: spaceport.jar
+          path: out/
 
   # Publishing is a separate job with write access that runs no build tooling.
   release:
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,21 +46,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: spaceport-jar
-      # Every push to spaceport refreshes the "dev" pre-release with the newest jar.
-      - name: Update dev build
-        if: github.ref == 'refs/heads/spaceport'
+      - name: Publish build
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          sha=${GITHUB_SHA::8}
-          gh release delete dev --yes --cleanup-tag || true
-          gh release create dev spaceport.jar --prerelease --target "$GITHUB_SHA" \
-            --title "Dev build $sha" --notes "Latest build of the spaceport branch ($sha). Not a stable release."
-      # Pushing a tag like v1.2.0 makes a normal release with the jar attached.
-      - name: Tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" spaceport.jar --title "Spaceport $GITHUB_REF_NAME" --generate-notes
+          version=$(cat version.txt)
+          n=$GITHUB_RUN_NUMBER
+          gh release delete dev --yes --cleanup-tag 2>/dev/null || true   # old rolling release from the first setup
+          gh release create "build-$n" spaceport-*.jar --target "$GITHUB_SHA" --latest \
+            --title "Spaceport $version build $n" \
+            --notes "Build $n of spaceport (${GITHUB_SHA::8}). Download the jar and run it like Velocity: java -jar spaceport-$version-$n.jar"
