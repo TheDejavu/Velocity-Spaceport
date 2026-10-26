@@ -368,7 +368,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       openSession(result);
       return;
     }
-    MojangNameLookup.lookup(server.createHttpClient(), login.getUsername())
+    server.getMojangNames().lookup(login.getUsername())
         .whenCompleteAsync((ownership, error) -> {
           if (mcConnection.isClosed()) {
             return;

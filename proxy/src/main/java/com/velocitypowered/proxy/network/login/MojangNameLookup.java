@@ -23,6 +23,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Asks Mojang whether a name is a paid account before an offline login is offered. Silence is
@@ -38,7 +39,18 @@ public final class MojangNameLookup {
 
   static final String LOOKUP = "https://api.mojang.com/users/profiles/minecraft/";
 
+  private static final AtomicLong RATE_LIMITED = new AtomicLong();
+
   private MojangNameLookup() {
+  }
+
+  /**
+   * How many lookups Mojang answered with 429 since start.
+   *
+   * @return the count
+   */
+  public static long rateLimited() {
+    return RATE_LIMITED.get();
   }
 
   public static Ownership decide(int status) {
@@ -89,7 +101,12 @@ public final class MojangNameLookup {
         .GET()
         .build();
     return client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
-        .thenApply(response -> decide(response.statusCode()))
+        .thenApply(response -> {
+          if (response.statusCode() == 429) {
+            RATE_LIMITED.incrementAndGet();
+          }
+          return decide(response.statusCode());
+        })
         .exceptionally(error -> Ownership.SILENT);
   }
 }

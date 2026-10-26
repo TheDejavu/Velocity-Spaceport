@@ -25,6 +25,8 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.login.MojangNameLookup;
+import com.velocitypowered.proxy.network.login.MojangNames;
 import com.velocitypowered.proxy.util.AddressUtil;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -343,9 +345,30 @@ public final class ProxyHealth implements AutoCloseable {
       counter(out, "spaceport_login_rate_limited_total",
           "logins refused by the shared per-address rate limit", s.loginsLimited());
     }
+    mojangLookups(out);
     population(out);
     servers(out);
     return out.toString();
+  }
+
+  private void mojangLookups(StringBuilder out) {
+    MojangNames names = server.getMojangNames();
+    if (names == null) {
+      return;
+    }
+    MojangNames.Stats s = names.stats();
+    out.append("# HELP spaceport_mojang_lookup_total Mojang name lookups for offline logins\n")
+        .append("# TYPE spaceport_mojang_lookup_total counter\n")
+        .append("spaceport_mojang_lookup_total{result=\"cached\"} ").append(s.cacheHits())
+        .append('\n')
+        .append("spaceport_mojang_lookup_total{result=\"owned\"} ").append(s.owns())
+        .append('\n')
+        .append("spaceport_mojang_lookup_total{result=\"free\"} ").append(s.free())
+        .append('\n')
+        .append("spaceport_mojang_lookup_total{result=\"silent\"} ").append(s.silent())
+        .append('\n');
+    counter(out, "spaceport_mojang_rate_limited_total", "Mojang name lookups answered with 429",
+        MojangNameLookup.rateLimited());
   }
 
   private void population(StringBuilder out) {
