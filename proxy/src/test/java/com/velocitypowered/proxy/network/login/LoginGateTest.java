@@ -28,6 +28,7 @@ import com.velocitypowered.proxy.network.login.LoginGate.Decision;
 import com.velocitypowered.proxy.network.login.LoginGate.MojangName;
 import com.velocitypowered.proxy.network.login.LoginGate.PublicAction;
 import com.velocitypowered.proxy.network.login.LoginGate.Session;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -184,5 +185,34 @@ class LoginGateTest {
         com.electronwill.nightconfig.core.CommentedConfig.inMemory();
     on.set("login-gate", true);
     assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(on).loginGate());
+  }
+
+  @Test
+  void proxyFailoverMovesAnUnacceptedPlayerOnlyBetweenTryListServers() {
+    List<String> tryList = List.of("auth-1", "auth-2");
+    Session locked = LoginGate.untilAuthMe(OFFLINE);
+    assertTrue(LoginGate.mayMove(locked, false, false, "lobby", tryList));
+    assertTrue(LoginGate.mayMove(locked, true, true, "auth-2", tryList));
+    assertTrue(LoginGate.mayMove(locked, true, true, "AUTH-2", tryList));
+    assertFalse(LoginGate.mayMove(locked, true, true, "lobby", tryList));
+    assertFalse(LoginGate.mayMove(locked, true, true, null, tryList));
+    assertFalse(LoginGate.mayMove(locked, true, true, "auth-2", List.of()));
+    assertFalse(LoginGate.mayMove(null, true, true, "auth-2", tryList));
+  }
+
+  @Test
+  void playerAndPluginMovesStayBlockedEvenToATryListServer() {
+    List<String> tryList = List.of("auth-1", "auth-2");
+    Session locked = LoginGate.untilAuthMe(OFFLINE);
+    assertFalse(LoginGate.mayMove(locked, true, false, "auth-2", tryList));
+    assertFalse(LoginGate.mayMove(locked, true, false, "lobby", tryList));
+  }
+
+  @Test
+  void acceptedPlayerMovesAnywhere() {
+    Session session = LoginGate.untilAuthMe(OFFLINE);
+    LoginGate.authMeLoggedIn(session);
+    assertTrue(LoginGate.mayMove(session, true, false, "lobby", List.of("auth-1")));
+    assertTrue(LoginGate.mayMove(session, true, true, "lobby", List.of("auth-1")));
   }
 }

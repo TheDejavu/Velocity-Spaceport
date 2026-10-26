@@ -109,6 +109,7 @@ import com.velocitypowered.proxy.util.collect.CappedSet;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -606,8 +607,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   private ConnectionRequestBuilder createConnectionRequest(RegisteredServer server,
-      @Nullable VelocityServerConnection previousConnection) {
-    return new ConnectionRequestBuilderImpl(server, previousConnection);
+      @Nullable VelocityServerConnection previousConnection, boolean proxyFailover) {
+    return new ConnectionRequestBuilderImpl(server, previousConnection, proxyFailover);
   }
 
   @Override
@@ -809,7 +810,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
       switch (event.getResult()) {
         case DisconnectPlayer res -> disconnect(res.getReasonComponent());
-        case RedirectPlayer res -> createConnectionRequest(res.getServer(), previousConnection).connect()
+        case RedirectPlayer res -> createConnectionRequest(res.getServer(),
+                previousConnection, true).connect()
                 .whenCompleteAsync((status, throwable) -> {
                   if (throwable != null) {
                     handleConnectionException(res.getServer(), throwable, true);
@@ -918,11 +920,16 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    * The first server is the lobby AuthMe watches. Later moves wait until AuthMe logs them in.
    */
   public boolean mayChangeServer() {
-    if (!onAServer) {
-      return true;
+    return mayChangeServer(null, false);
+  }
+
+  private boolean mayChangeServer(@Nullable RegisteredServer target, boolean proxyFailover) {
+    List<String> tryList = new ArrayList<>(server.getConfiguration().getAttemptConnectionOrder());
+    if (serversToTry != null) {
+      tryList.addAll(serversToTry);
     }
-    return LoginGate.attempt(account, LoginGate.PublicAction.SERVER_SWITCH)
-        == LoginGate.Decision.ALLOW;
+    String name = target == null ? null : target.getServerInfo().getName();
+    return LoginGate.mayMove(account, onAServer, proxyFailover, name, tryList);
   }
 
   /** The backend reported an AuthMe login for this connection. */
@@ -1505,9 +1512,17 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
     private final RegisteredServer toConnect;
     private final @Nullable VelocityRegisteredServer previousServer;
+    private final boolean proxyFailover;
 
     ConnectionRequestBuilderImpl(RegisteredServer toConnect,
                                  @Nullable VelocityServerConnection previousConnection) {
+      this(toConnect, previousConnection, false);
+    }
+
+    ConnectionRequestBuilderImpl(RegisteredServer toConnect,
+                                 @Nullable VelocityServerConnection previousConnection,
+                                 boolean proxyFailover) {
+      this.proxyFailover = proxyFailover;
       this.toConnect = Preconditions.checkNotNull(toConnect, "info");
       this.previousServer = previousConnection == null ? null : previousConnection.getServer();
     }
@@ -1536,7 +1551,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     }
 
     private CompletableFuture<Impl> internalConnect() {
-      if (!mayChangeServer()) {
+      if (!mayChangeServer(toConnect, proxyFailover)) {
         remindToLogIn();
         return completedFuture(plainResult(ConnectionRequestBuilder.Status.CONNECTION_CANCELLED,
             toConnect));

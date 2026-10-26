@@ -17,6 +17,7 @@
 
 package com.velocitypowered.proxy.network.login;
 
+import java.util.List;
 import java.util.UUID;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -124,6 +125,26 @@ public final class LoginGate {
     }
     session.open = true;
     return Decision.ALLOW;
+  }
+
+  /**
+   * Whether a move to another server may start. A player who is not accepted yet moves only
+   * when the proxy itself redirects them after a kick, and only to a try-list server (the
+   * login limbos), never to a server a player or plugin picked.
+   *
+   * @param session the player's session
+   * @param joined whether the player has already joined a server
+   * @param proxyFailover whether the proxy started this move from a kick or restart
+   * @param target the server the move is to
+   * @param tryList the servers the proxy falls back through
+   * @return whether the move may go ahead
+   */
+  public static boolean mayMove(Session session, boolean joined, boolean proxyFailover,
+      String target, List<String> tryList) {
+    if (!joined || attempt(session, PublicAction.SERVER_SWITCH) == Decision.ALLOW) {
+      return true;
+    }
+    return proxyFailover && session != null && LoginLobbies.staying(target, tryList);
   }
 
   /** A client packet, command, or listener. Never opens a locked account. */
