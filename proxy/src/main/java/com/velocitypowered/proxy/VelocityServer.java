@@ -62,6 +62,8 @@ import com.velocitypowered.proxy.network.cluster.LocalStore;
 import com.velocitypowered.proxy.network.cluster.NetworkActions;
 import com.velocitypowered.proxy.network.cluster.NetworkStore;
 import com.velocitypowered.proxy.network.cluster.PluginMessenger;
+import com.velocitypowered.proxy.network.login.LoginBus;
+import com.velocitypowered.proxy.network.login.LoginWave;
 import com.velocitypowered.proxy.network.cluster.RedisStore;
 import com.velocitypowered.proxy.network.cluster.VelocityNetwork;
 import com.velocitypowered.proxy.network.health.ProxyHealth;
@@ -190,6 +192,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private final ProxyHealth health = new ProxyHealth(this);
   private VelocityNetwork network = new VelocityNetwork(this, null, null);
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
+  private volatile LoginWave loginWave = new LoginWave(0);
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
   private final VelocityEventManager eventManager;
@@ -326,6 +329,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     }
 
     ipAttemptLimiter = Ratelimiters.createWithMilliseconds(configuration.getLoginRatelimit());
+    loginWave = new LoginWave(configuration.getNetworkConfig().loginWaveMax());
     commandRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getCommandRatelimit());
     tabCompleteRateLimiter = Ratelimiters.createWithMilliseconds(configuration.getTabCompleteRatelimit());
     if (configuration.getNetworkConfig().enabled()) {
@@ -630,6 +634,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
     commandManager.setAnnounceProxyCommands(newConfiguration.isAnnounceProxyCommands());
     ipAttemptLimiter = Ratelimiters.createWithMilliseconds(newConfiguration.getLoginRatelimit());
+    loginWave = new LoginWave(newConfiguration.getNetworkConfig().loginWaveMax());
     this.configuration = newConfiguration;
     eventManager.fireAndForget(new ProxyReloadEvent());
     return true;
@@ -766,6 +771,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
   public @MonotonicNonNull Ratelimiter<InetAddress> getIpAttemptLimiter() {
     return ipAttemptLimiter;
+  }
+
+  public LoginWave getLoginWave() {
+    return loginWave;
   }
 
   public @MonotonicNonNull Ratelimiter<UUID> getCommandRateLimiter() {
@@ -979,6 +988,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     }
     cluster.start();
     network = new VelocityNetwork(this, cluster, actions, messenger);
+    LoginBus.listen(messenger);
     NetworkCommands.register(this);
   }
 

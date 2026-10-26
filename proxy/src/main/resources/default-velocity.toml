@@ -251,6 +251,21 @@ transfer-port = 25565
 # Players transferred per second while draining.
 drain-rate = 50
 
+# This proxy's Geyser, the address Bedrock clients connect to. Empty: this proxy has no Geyser.
+# Each proxy that has one publishes it to the network, and a drain moves Bedrock players to
+# another proxy's Geyser after the backend has saved them. Run Geyser-Velocity on the proxy
+# (plugin id "geyser") with auth-type floodgate, and Floodgate on the proxy and the backends.
+# The same bedrock-prefix must be Floodgate's username prefix. A name with that prefix is a
+# cracked account: it skips the Mojang check, is never marked premium, and uses the same
+# password login as any other cracked player.
+bedrock-host = ""
+bedrock-port = 19132
+bedrock-prefix = "."
+
+# After the account is accepted, the player is moved from the auth server (the try list) onto
+# the first of these that accepts them. Empty: they stay where they logged in.
+login-lobbies = []
+
 # Keys that sign transfer tickets (created if missing). Copy the same file to every proxy; it is
 # separate from the forwarding secret. Format: one "id=base64key" per line, the first one signs.
 transfer-secret-file = "network-secret.key"
@@ -288,3 +303,8 @@ auth-outage-window = 43200
 login-rate-limit = false
 login-rate-max = 20
 login-rate-window = 60
+
+# How many login handshakes this proxy accepts per second, from every address together.
+# 0 leaves the check off. A wave past the budget is refused here, before Redis and before Mojang.
+# A player who is only logging in once is not delayed.
+login-wave-max = 0

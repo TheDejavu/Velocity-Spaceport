@@ -137,5 +137,8 @@ class ProxyHealthTest {
     assertTrue(body.contains("spaceport_claims_total{result=\"ok\"} 3\n"), body);
     assertTrue(body.contains("spaceport_store_latency_seconds 1.5E-4\n"), body);
     assertTrue(body.contains("spaceport_bus_timeouts_total 1\n"), body);
+    assertTrue(body.contains("spaceport_players_kind{kind=\"premium\"} 0\n"), body);
+    assertTrue(body.contains("spaceport_players_kind{kind=\"cracked\"} 0\n"), body);
+    assertTrue(body.contains("spaceport_players_kind{kind=\"bedrock\"} 0\n"), body);
   }
 }

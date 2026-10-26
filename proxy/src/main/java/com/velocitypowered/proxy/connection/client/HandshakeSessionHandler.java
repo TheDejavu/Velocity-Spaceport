@@ -138,6 +138,12 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
       return;
     }
 
+    if (!server.getLoginWave().allow(System.currentTimeMillis())) {
+      connection.setState(StateRegistry.LOGIN);
+      ic.disconnectQuietly(Component.text("Too many logins right now"));
+      return;
+    }
+
     final InetAddress address = ((InetSocketAddress) connection.getRemoteAddress()).getAddress();
     if (!server.getIpAttemptLimiter().attempt(address)) {
       // Bump connection into correct protocol state so that we can send the disconnect packet.

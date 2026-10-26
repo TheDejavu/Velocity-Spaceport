@@ -32,10 +32,12 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
+import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.login.MojangNameLookup;
 import com.velocitypowered.proxy.network.cluster.RouteTicket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
@@ -356,6 +358,39 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
   }
 
   private void continueLogin(PreLoginComponentResult result) {
+    NetworkConfig network = server.getConfiguration().getNetworkConfig();
+    if (MojangNameLookup.crackedBedrock(login.getUsername(), network.bedrockHost(),
+        network.bedrockPrefix())) {
+      openSession(PreLoginComponentResult.forceOfflineMode());
+      return;
+    }
+    if (alreadyAskingMojang(result)) {
+      openSession(result);
+      return;
+    }
+    MojangNameLookup.lookup(server.createHttpClient(), login.getUsername())
+        .whenCompleteAsync((ownership, error) -> {
+          if (mcConnection.isClosed()) {
+            return;
+          }
+          if (ownership == MojangNameLookup.Ownership.OWNS) {
+            openSession(PreLoginComponentResult.forceOnlineMode());
+            return;
+          }
+          if (error != null || ownership != MojangNameLookup.Ownership.FREE) {
+            inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+            return;
+          }
+          openSession(result);
+        }, mcConnection.eventLoop());
+  }
+
+  private boolean alreadyAskingMojang(PreLoginComponentResult result) {
+    return !result.isForceOfflineMode()
+        && (server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed());
+  }
+
+  private void openSession(PreLoginComponentResult result) {
     if (!result.isForceOfflineMode()
         && (server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed())) {
       // Request encryption.
@@ -373,6 +408,9 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       this.offlineEncryption = true;
       mcConnection.write(request);
       this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+    } else if (OFFLINE_ENCRYPTION) {
+      inbound.disconnect(Component.text(
+          "Use Minecraft 1.20.5 or newer so this connection can be encrypted."));
     } else {
       mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
           new AuthSessionHandler(server, inbound,

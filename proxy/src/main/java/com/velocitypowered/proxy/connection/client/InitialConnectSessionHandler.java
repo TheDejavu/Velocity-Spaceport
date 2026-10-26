@@ -22,6 +22,7 @@ import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.connection.backend.BungeeCordMessageResponder;
+import com.velocitypowered.proxy.network.login.PlayerLoginChannels;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import io.netty.buffer.ByteBufUtil;
@@ -48,6 +49,9 @@ public class InitialConnectSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(PluginMessagePacket packet) {
+    if (PlayerLoginChannels.fromTheClient(packet.getChannel())) {
+      return true;
+    }
     VelocityServerConnection serverConn = player.getConnectionInFlight();
     if (serverConn != null) {
       if (player.getPhase().handle(player, packet, serverConn)) {

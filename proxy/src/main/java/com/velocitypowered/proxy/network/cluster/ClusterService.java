@@ -40,9 +40,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -161,6 +163,7 @@ public final class ClusterService implements AutoCloseable {
   private boolean tickInFlight;
   private volatile int remotePlayers;
   private volatile List<ProxyState> proxies = List.of();
+  private final Map<String, BedrockDoors.Door> bedrockDoors = new ConcurrentHashMap<>();
   /** Players per backend server on each other proxy, from the last tick. */
   private volatile Map<String, Map<String, Integer>> remoteServerCounts = Map.of();
 
@@ -371,9 +374,57 @@ public final class ClusterService implements AutoCloseable {
     }
     remoteServerCounts = counts;
     proxies = List.copyOf(decoded);
+    publishBedrock();
+    refreshBedrock();
     if (resync) {
       resync();
     }
+  }
+
+  /** Tells the other proxies where this proxy's Geyser is. */
+  private void publishBedrock() {
+    String host = config.bedrockHost();
+    if (host == null || host.isEmpty()) {
+      return;
+    }
+    store.put("bedrock:" + proxyId, host + ":" + config.bedrockPort(), TTL_MILLIS)
+        .exceptionally(ex -> null);
+  }
+
+  /** Reads the Geysers the other proxies published. */
+  private void refreshBedrock() {
+    Set<String> live = new HashSet<>();
+    for (ProxyState proxy : proxies) {
+      if (proxy.id().equals(proxyId) || proxy.players() < 0 || proxy.ageMillis() >= DEAD_AFTER_MILLIS) {
+        bedrockDoors.remove(proxy.id());
+        continue;
+      }
+      live.add(proxy.id());
+      store.get("bedrock:" + proxy.id()).thenAccept(value -> {
+        BedrockDoors.Door door = BedrockDoors.parse(value.orElse(null));
+        if (door == null) {
+          bedrockDoors.remove(proxy.id());
+        } else {
+          bedrockDoors.put(proxy.id(), door);
+        }
+      });
+    }
+    bedrockDoors.keySet().retainAll(live);
+  }
+
+  /**
+   * A Geyser that is up and not draining, on some other proxy.
+   *
+   * @return where a Bedrock player can be sent, or null
+   */
+  public BedrockDoors.@Nullable Door bedrockTarget() {
+    List<BedrockDoors.Offer> offers = new ArrayList<>();
+    for (ProxyState proxy : proxies) {
+      boolean alive = proxy.players() >= 0 && proxy.ageMillis() < DEAD_AFTER_MILLIS;
+      offers.add(new BedrockDoors.Offer(proxy.id(), alive, proxy.draining(),
+          bedrockDoors.get(proxy.id())));
+    }
+    return BedrockDoors.pick(proxyId, offers);
   }
 
   /** Writes every local player again, after the store lost them. */

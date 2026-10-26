@@ -30,6 +30,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
+import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
@@ -54,6 +55,9 @@ public final class ServerCommand {
                 && src.getPermissionValue("velocity.command.server") != Tristate.FALSE)
         .executes(ctx -> {
           final Player player = (Player) ctx.getSource();
+          if (stillLoggingIn(player)) {
+            return 0;
+          }
           outputServerInformation(player, server);
           return Command.SINGLE_SUCCESS;
         })
@@ -72,6 +76,9 @@ public final class ServerCommand {
             })
             .executes(ctx -> {
               final Player player = (Player) ctx.getSource();
+              if (stillLoggingIn(player)) {
+                return 0;
+              }
               // Trying to connect to a server.
               final String serverName = StringArgumentType.getString(ctx, SERVER_ARG);
               final Optional<RegisteredServer> toConnect = server.getServer(serverName);
@@ -87,6 +94,14 @@ public final class ServerCommand {
         ).build();
 
     return new BrigadierCommand(node);
+  }
+
+  private static boolean stillLoggingIn(Player player) {
+    if (player instanceof ConnectedPlayer connected && !connected.mayChangeServer()) {
+      connected.remindToLogIn();
+      return true;
+    }
+    return false;
   }
 
   private static void outputServerInformation(final Player executor,

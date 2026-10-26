@@ -37,6 +37,7 @@ import com.velocitypowered.proxy.connection.player.resourcepack.handler.Resource
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
+import com.velocitypowered.proxy.network.login.LoginGate;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
@@ -272,6 +273,10 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(PluginMessagePacket packet) {
+    if (LoginGate.LOGGED_IN_CHANNEL.equals(packet.getChannel())) {
+      serverConn.getPlayer().authMeLoggedIn();
+      return true;
+    }
     if (PluginMessageUtil.isMcBrand(packet)) {
       serverConn.getPlayer().getConnection().write(
           PluginMessageUtil.rewriteMinecraftBrand(packet, server.getVersion(),
@@ -312,6 +317,9 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(TransferPacket packet) {
+    if (!serverConn.getPlayer().mayChangeServer()) {
+      return true;
+    }
     final InetSocketAddress originalAddress = packet.address();
     if (originalAddress == null) {
       logger.error("""

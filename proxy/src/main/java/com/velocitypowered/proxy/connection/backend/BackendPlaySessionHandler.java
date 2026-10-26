@@ -45,6 +45,7 @@ import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResource
 import com.velocitypowered.proxy.connection.player.resourcepack.handler.ResourcePackHandler;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.network.BackendChannelInitializer;
+import com.velocitypowered.proxy.network.login.LoginGate;
 import com.velocitypowered.proxy.network.Connections;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
@@ -322,6 +323,10 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
       server.getHealth().saved(serverConn.getPlayer().getUniqueId());
       return true;
     }
+    if (LoginGate.LOGGED_IN_CHANNEL.equals(packet.getChannel())) {
+      serverConn.getPlayer().authMeLoggedIn();
+      return true;
+    }
 
     // Register and unregister packets are simply forwarded to the client as-is.
     if (PluginMessageUtil.isRegister(packet) || PluginMessageUtil.isUnregister(packet)) {
@@ -426,6 +431,9 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(TransferPacket packet) {
+    if (!serverConn.getPlayer().mayChangeServer()) {
+      return true;
+    }
     final InetSocketAddress originalAddress = packet.address();
     if (originalAddress == null) {
       logger.error("""

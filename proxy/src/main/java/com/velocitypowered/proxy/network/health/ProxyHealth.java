@@ -20,6 +20,8 @@ package com.velocitypowered.proxy.network.health;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.velocitypowered.api.network.ProxyNode;
+import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
@@ -27,9 +29,13 @@ import com.velocitypowered.proxy.util.AddressUtil;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -65,9 +71,12 @@ public final class ProxyHealth implements AutoCloseable {
   private volatile @Nullable CompletableFuture<Void> transfersDone;
   private final LongAdder transferred = new LongAdder();
   private final BedrockDetector bedrock;
+  private final BedrockHandoff bedrockHandoff;
   private volatile double loginsPerSecond;
   private int sample;
   private volatile @Nullable HttpServer http;
+  private volatile @Nullable ScheduledExecutorService probes;
+  private final Map<String, Integer> backendUp = new ConcurrentHashMap<>();
 
   /**
    * Creates the health service; nothing runs until {@link #start()}.
@@ -77,6 +86,8 @@ public final class ProxyHealth implements AutoCloseable {
   public ProxyHealth(VelocityServer server) {
     this.server = server;
     this.bedrock = new BedrockDetector(id -> server.getPluginManager().getPlugin(id)
+        .flatMap(c -> c.getInstance()).map(instance -> instance.getClass().getClassLoader()));
+    this.bedrockHandoff = new BedrockHandoff(id -> server.getPluginManager().getPlugin(id)
         .flatMap(c -> c.getInstance()).map(instance -> instance.getClass().getClassLoader()));
   }
 
@@ -106,6 +117,13 @@ public final class ProxyHealth implements AutoCloseable {
     http.createContext("/metrics", ex -> respond(ex, 200, metrics()));
     http.start();
     this.http = http;
+    ScheduledExecutorService probe = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread thread = new Thread(r, "Spaceport Backend Probe");
+      thread.setDaemon(true);
+      return thread;
+    });
+    probe.scheduleWithFixedDelay(this::probeBackends, 0, 5, TimeUnit.SECONDS);
+    this.probes = probe;
     logger.info("Health and metrics listening on http://{}/ (/health/live, /health/ready, "
         + "/metrics)", bind);
   }
@@ -192,8 +210,9 @@ public final class ProxyHealth implements AutoCloseable {
         cluster.setDraining(true);
       }
       logger.info("Draining: marked draining in the network");
-      if (cluster != null && cluster.canTransfer()) {
-        transfers = new TransferDrain(server, cluster, timer, transferred, deadline, bedrock);
+      if (cluster != null && (cluster.canTransfer() || !config().bedrockHost().isEmpty())) {
+        transfers = new TransferDrain(server, cluster, timer, transferred, deadline, bedrock,
+            bedrockHandoff);
         transfersDone = transfers.start();
       }
       marked.complete(null);
@@ -324,7 +343,84 @@ public final class ProxyHealth implements AutoCloseable {
       counter(out, "spaceport_login_rate_limited_total",
           "logins refused by the shared per-address rate limit", s.loginsLimited());
     }
+    population(out);
+    servers(out);
     return out.toString();
+  }
+
+  private void population(StringBuilder out) {
+    int premium = 0;
+    int cracked = 0;
+    int bedrockPlayers = 0;
+    Collection<Player> players = server.getAllPlayers();
+    if (players != null) {
+      for (Player player : players) {
+        if (bedrock.isBedrock(player.getUniqueId())) {
+          bedrockPlayers++;
+        } else if (player.isOnlineMode()) {
+          premium++;
+        } else {
+          cracked++;
+        }
+      }
+    }
+    out.append("# HELP spaceport_players_kind players on this proxy by how they joined\n")
+        .append("# TYPE spaceport_players_kind gauge\n")
+        .append("spaceport_players_kind{kind=\"premium\"} ").append(premium).append('\n')
+        .append("spaceport_players_kind{kind=\"cracked\"} ").append(cracked).append('\n')
+        .append("spaceport_players_kind{kind=\"bedrock\"} ").append(bedrockPlayers).append('\n');
+  }
+
+  private void servers(StringBuilder out) {
+    out.append("# HELP spaceport_server_players players on this proxy, per backend\n")
+        .append("# TYPE spaceport_server_players gauge\n")
+        .append("# HELP spaceport_server_up 1 when this proxy can open a connection to the backend\n")
+        .append("# TYPE spaceport_server_up gauge\n");
+    Collection<RegisteredServer> servers = server.getAllServers();
+    if (servers == null) {
+      return;
+    }
+    for (RegisteredServer registered : servers) {
+      String name = registered.getServerInfo().getName();
+      if (name == null || name.isEmpty()) {
+        continue;
+      }
+      Collection<Player> connected = registered.getPlayersConnected();
+      int players = connected == null ? 0 : connected.size();
+      String safe = label(name);
+      out.append("spaceport_server_players{server=\"").append(safe).append("\"} ")
+          .append(players).append('\n');
+      Integer up = backendUp.get(name);
+      if (up != null) {
+        out.append("spaceport_server_up{server=\"").append(safe).append("\"} ")
+            .append(up).append('\n');
+      }
+    }
+  }
+
+  private void probeBackends() {
+    try {
+      Collection<RegisteredServer> servers = server.getAllServers();
+      if (servers == null) {
+        return;
+      }
+      for (RegisteredServer registered : servers) {
+        String name = registered.getServerInfo().getName();
+        if (name == null || name.isEmpty()) {
+          continue;
+        }
+        int up = 0;
+        try (Socket socket = new Socket()) {
+          socket.connect(registered.getServerInfo().getAddress(), 400);
+          up = 1;
+        } catch (IOException failure) {
+          up = 0;
+        }
+        backendUp.put(name, up);
+      }
+    } catch (RuntimeException failure) {
+      logger.warn("Backend probe failed: {}", failure.toString());
+    }
   }
 
   private void perProxy(StringBuilder out, String name, String help, boolean draining) {
@@ -368,5 +464,9 @@ public final class ProxyHealth implements AutoCloseable {
       http.stop(0);
     }
     timer.shutdownNow();
+    ScheduledExecutorService probe = probes;
+    if (probe != null) {
+      probe.shutdownNow();
+    }
   }
 }

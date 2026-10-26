@@ -27,8 +27,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Spaceport: tells Bedrock players (through Geyser) apart from Java ones, without depending on
- * Geyser or Floodgate. A Java Transfer packet sent to a Bedrock player makes Geyser drop it, so
- * drains treat Bedrock players like clients too old to transfer.
+ * Geyser or Floodgate. Drains move these players with {@link BedrockHandoff} instead of a Java
+ * transfer packet.
  *
  * <ol>
  *   <li>Floodgate gives Bedrock players uuids whose upper 64 bits are zero (the lower half is the

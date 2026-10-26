@@ -40,6 +40,8 @@ import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.login.LoginBus;
+import com.velocitypowered.proxy.network.login.PremiumProof;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.packet.LoginAcknowledgedPacket;
 import com.velocitypowered.proxy.protocol.packet.ServerLoginSuccessPacket;
@@ -99,8 +101,13 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
         return CompletableFuture.completedFuture(null);
       }
 
-      // Initiate a regular connection and move over to it.
-      ConnectedPlayer player = new ConnectedPlayer(server, profileEvent.getGameProfile(),
+      GameProfile chosen = profileEvent.getGameProfile();
+      if (onlineMode) {
+        chosen = PremiumProof.stamp(chosen);
+        LoginBus.tell(server, chosen);
+      }
+
+      ConnectedPlayer player = new ConnectedPlayer(server, chosen,
           mcConnection, inbound.getVirtualHost().orElse(null), inbound.getRawVirtualHost().orElse(null), onlineMode,
           inbound.getHandshakeIntent(), inbound.getIdentifiedKey());
       this.connectedPlayer = player;

@@ -38,6 +38,7 @@ import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.connection.backend.BackendConnectionPhases;
 import com.velocitypowered.proxy.connection.backend.BungeeCordMessageResponder;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
+import com.velocitypowered.proxy.network.login.PlayerLoginChannels;
 import com.velocitypowered.proxy.connection.forge.legacy.LegacyForgeConstants;
 import com.velocitypowered.proxy.connection.player.resourcepack.ResourcePackResponseBundle;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
@@ -363,6 +364,9 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(PluginMessagePacket packet) {
+    if (PlayerLoginChannels.fromTheClient(packet.getChannel())) {
+      return true;
+    }
     // Handling edge case when packet with FML client handshake (state COMPLETE)
     // arrives after JoinGame packet from destination server
     VelocityServerConnection serverConn =

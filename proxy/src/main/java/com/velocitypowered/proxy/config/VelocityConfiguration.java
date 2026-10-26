@@ -1073,6 +1073,14 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param loginRateWindow length of that window in seconds
    * @param lastSeenTtl days a player's last-seen record (last proxy, server, time) is kept after
    *     it leaves, 0 to keep none
+   * @param loginWaveMax login handshakes this proxy accepts per second from all addresses
+   *     together, 0 to leave the check off
+   * @param bedrockHost address Bedrock clients use for this proxy's Geyser; empty means this
+   *     proxy has no Geyser
+   * @param bedrockPort port for {@code bedrockHost}
+   * @param bedrockPrefix name prefix Floodgate gives Bedrock players, skipped by the Mojang check
+   * @param loginLobbies servers a player is moved to after the account is accepted; empty leaves
+   *     them on the server they logged in on
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
@@ -1082,10 +1090,13 @@ public class VelocityConfiguration implements ProxyConfig {
                               int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave,
                               boolean authOutageMode, int authOutageWindow,
                               boolean loginRateLimit, int loginRateMax, int loginRateWindow,
-                              int lastSeenTtl) {
+                              int lastSeenTtl, int loginWaveMax,
+                              String bedrockHost, int bedrockPort, String bedrockPrefix,
+                              List<String> loginLobbies) {
     public static final NetworkConfig DEFAULT = new NetworkConfig(false, "auto",
         "redis://127.0.0.1:6379/0", "sp:", "redis", "newest-wins", "stop-logins", "", 5, 120, "", 25565, 50,
-        "network-secret.key", true, 21600, 300, false, false, 43200, false, 20, 60, 30);
+        "network-secret.key", true, 21600, 300, false, false, 43200, false, 20, 60, 30, 0,
+        "", 19132, ".", List.of());
 
     /** Without the login rate limit settings (off). */
     public NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
@@ -1097,7 +1108,23 @@ public class VelocityConfiguration implements ProxyConfig {
       this(enabled, proxyId, redisUri, keyPrefix, store, duplicateLogin, redisDownPolicy,
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
-          drainWaitForSave, authOutageMode, authOutageWindow, false, 20, 60, 30);
+          drainWaitForSave, authOutageMode, authOutageWindow, false, 20, 60, 30, 0,
+          "", 19132, ".", List.of());
+    }
+
+    /** Without the login wave cap (off). */
+    public NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
+        String store, String duplicateLogin, String redisDownPolicy, String healthBind,
+        int healthInterval, int drainTimeout, String transferHost, int transferPort,
+        int drainRate, String transferSecretFile, boolean skipAuthWithTicket,
+        int profileCacheTtl, int lastServerTtl, boolean drainWaitForSave,
+        boolean authOutageMode, int authOutageWindow, boolean loginRateLimit, int loginRateMax,
+        int loginRateWindow, int lastSeenTtl) {
+      this(enabled, proxyId, redisUri, keyPrefix, store, duplicateLogin, redisDownPolicy,
+          healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
+          transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
+          drainWaitForSave, authOutageMode, authOutageWindow, loginRateLimit, loginRateMax,
+          loginRateWindow, lastSeenTtl, 0, "", 19132, ".", List.of());
     }
 
     /** Without the last-seen retention (30 days). */
@@ -1112,7 +1139,7 @@ public class VelocityConfiguration implements ProxyConfig {
           healthBind, healthInterval, drainTimeout, transferHost, transferPort, drainRate,
           transferSecretFile, skipAuthWithTicket, profileCacheTtl, lastServerTtl,
           drainWaitForSave, authOutageMode, authOutageWindow, loginRateLimit, loginRateMax,
-          loginRateWindow, 30);
+          loginRateWindow, 30, 0, "", 19132, ".", List.of());
     }
 
     /**
@@ -1129,6 +1156,13 @@ public class VelocityConfiguration implements ProxyConfig {
       if (lastSeenTtl < 0) {
         throw new IllegalArgumentException("[network] last-seen-ttl must not be negative");
       }
+      if (loginWaveMax < 0) {
+        throw new IllegalArgumentException("[network] login-wave-max must not be negative");
+      }
+      if (!bedrockHost.isEmpty() && (bedrockPort < 1 || bedrockPort > 65535)) {
+        throw new IllegalArgumentException("[network] bedrock-port must be between 1 and 65535");
+      }
+      loginLobbies = loginLobbies == null ? List.of() : List.copyOf(loginLobbies);
     }
 
     private static void checkChoice(String key, String value, String... allowed) {
@@ -1180,7 +1214,12 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getOrElse("login-rate-limit", DEFAULT.loginRateLimit()),
           config.getIntOrElse("login-rate-max", DEFAULT.loginRateMax()),
           config.getIntOrElse("login-rate-window", DEFAULT.loginRateWindow()),
-          config.getIntOrElse("last-seen-ttl", DEFAULT.lastSeenTtl()));
+          config.getIntOrElse("last-seen-ttl", DEFAULT.lastSeenTtl()),
+          config.getIntOrElse("login-wave-max", DEFAULT.loginWaveMax()),
+          config.getOrElse("bedrock-host", DEFAULT.bedrockHost()),
+          config.getIntOrElse("bedrock-port", DEFAULT.bedrockPort()),
+          config.getOrElse("bedrock-prefix", DEFAULT.bedrockPrefix()),
+          config.getOrElse("login-lobbies", DEFAULT.loginLobbies()));
     }
   }
 }

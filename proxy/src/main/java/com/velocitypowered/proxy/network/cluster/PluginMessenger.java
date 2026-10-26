@@ -108,6 +108,11 @@ public final class PluginMessenger implements NetworkMessenger {
     }
   }
 
+  public void registerInternal(Key channel, Listener listener) {
+    Registration added = new Registration(this, Objects.requireNonNull(listener, "listener"), null);
+    channels.compute(channel, (k, list) -> append(list, added));
+  }
+
   @Override
   public void registerListener(Object plugin, Key channel, Listener listener) {
     checkPlugin(plugin);

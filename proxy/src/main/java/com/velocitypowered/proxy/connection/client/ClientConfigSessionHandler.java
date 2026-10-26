@@ -28,6 +28,7 @@ import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.connection.backend.BungeeCordMessageResponder;
+import com.velocitypowered.proxy.network.login.PlayerLoginChannels;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.player.resourcepack.ResourcePackResponseBundle;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
@@ -136,6 +137,9 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(final PluginMessagePacket packet) {
+    if (PlayerLoginChannels.fromTheClient(packet.getChannel())) {
+      return true;
+    }
     final VelocityServerConnection serverConn = player.getConnectionInFlight();
     if (PluginMessageUtil.isMcBrand(packet)) {
       final String brand = PluginMessageUtil.readBrandMessage(packet.content());

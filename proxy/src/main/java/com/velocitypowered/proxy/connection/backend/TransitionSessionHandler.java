@@ -33,6 +33,7 @@ import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
+import com.velocitypowered.proxy.network.login.LoginGate;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
@@ -188,6 +189,10 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(PluginMessagePacket packet) {
+    if (LoginGate.LOGGED_IN_CHANNEL.equals(packet.getChannel())) {
+      serverConn.getPlayer().authMeLoggedIn();
+      return true;
+    }
     if (bungeecordMessageResponder.process(packet)) {
       return true;
     }

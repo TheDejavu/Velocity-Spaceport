@@ -25,6 +25,7 @@ import com.velocitypowered.proxy.config.VelocityConfiguration.NetworkConfig;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
+import com.velocitypowered.proxy.network.cluster.BedrockDoors;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.packet.ClientboundStoreCookiePacket;
@@ -52,7 +53,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * gets a signed ticket as the {@code spaceport:route} cookie and a Transfer to the load balancer,
  * which sends it to a proxy that is not draining; that proxy sends it back to the same backend
  * server. Clients older than 1.20.5 cannot be transferred: they are disconnected with a reconnect
- * message once everyone else has gone, and so are Bedrock players (see {@link BedrockDetector}).
+ * message once everyone else has gone. Bedrock players are moved with Geyser to another proxy's
+ * Geyser (see {@link BedrockHandoff}), after the same save.
  * While the network store is unreachable the drain waits.
  */
 final class TransferDrain {
@@ -74,12 +76,15 @@ final class TransferDrain {
   private final LongAdder transferred;
   private final long deadline;
   private final BedrockDetector bedrock;
+  private final BedrockHandoff handoff;
   private boolean oldClientsKicked;
+  private long noBedrockTargetSince;
   private @Nullable ScheduledFuture<?> task;
 
   TransferDrain(VelocityServer server, ClusterService cluster, ScheduledExecutorService timer,
-      LongAdder transferred, long deadline, BedrockDetector bedrock) {
+      LongAdder transferred, long deadline, BedrockDetector bedrock, BedrockHandoff handoff) {
     this.bedrock = bedrock;
+    this.handoff = handoff;
     this.server = server;
     this.cluster = cluster;
     this.timer = timer;
@@ -130,6 +135,9 @@ final class TransferDrain {
         transfer(next);
         return;
       }
+      if (waitingForAGeyser()) {
+        return;
+      }
       // Everyone who can be transferred has been; the rest cannot (D6).
       if (!oldClientsKicked) {
         oldClientsKicked = true;
@@ -166,10 +174,36 @@ final class TransferDrain {
     return queue.poll();
   }
 
-  /** Java 1.20.5+ only; Bedrock players (Geyser) would be dropped by a Java Transfer. */
+  /** A Bedrock player waits briefly for another proxy's Geyser to show up in the network. */
+  private boolean waitingForAGeyser() {
+    if (!handoff.available() || config().bedrockHost().isEmpty() || cluster.bedrockTarget() != null) {
+      noBedrockTargetSince = 0;
+      return false;
+    }
+    boolean bedrockLeft = false;
+    for (Player player : server.getAllPlayers()) {
+      if (!sent.contains(player.getUniqueId()) && bedrock.isBedrock(player.getUniqueId())) {
+        bedrockLeft = true;
+        break;
+      }
+    }
+    if (!bedrockLeft) {
+      noBedrockTargetSince = 0;
+      return false;
+    }
+    if (noBedrockTargetSince == 0) {
+      noBedrockTargetSince = System.currentTimeMillis();
+    }
+    return System.currentTimeMillis() - noBedrockTargetSince < 2000;
+  }
+
+  /** Java 1.20.5+, or a Bedrock player when another Geyser is up. */
   private boolean canTransfer(ConnectedPlayer player) {
-    return player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5)
-        && !bedrock.isBedrock(player.getUniqueId());
+    if (bedrock.isBedrock(player.getUniqueId())) {
+      return handoff.available() && cluster.bedrockTarget() != null;
+    }
+    return cluster.canTransfer()
+        && player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5);
   }
 
   /** Transfer works in configuration and play; a player still logging in waits. */
@@ -179,6 +213,10 @@ final class TransferDrain {
   }
 
   private void transfer(ConnectedPlayer player) {
+    if (bedrock.isBedrock(player.getUniqueId())) {
+      transferBedrock(player);
+      return;
+    }
     UUID uuid = player.getUniqueId();
     sent.add(uuid);
     VelocityServerConnection backend = player.getConnectedServer();
@@ -197,6 +235,35 @@ final class TransferDrain {
       connection.write(new ClientboundStoreCookiePacket(ClusterService.ROUTE_COOKIE, ticket));
       connection.write(new TransferPacket(config().transferHost(), config().transferPort()));
       transferred.increment();
+    });
+  }
+
+  /** Saves the player, remembers their server, then asks Geyser to send them on. */
+  private void transferBedrock(ConnectedPlayer player) {
+    BedrockDoors.Door door = cluster.bedrockTarget();
+    if (door == null) {
+      return;
+    }
+    UUID uuid = player.getUniqueId();
+    sent.add(uuid);
+    VelocityServerConnection backend = player.getConnectedServer();
+    String serverName = backend == null ? null : backend.getServerInfo().getName();
+    CompletableFuture<Void> saved = config().drainWaitForSave() && backend != null
+        ? requestSave(player, backend) : CompletableFuture.completedFuture(null);
+    saved.thenRun(() -> {
+      if (serverName != null) {
+        cluster.store().putRoute(uuid, serverName, 60_000).exceptionally(ex -> null);
+      }
+      cluster.releaseForTransfer(uuid).thenRun(() -> {
+        if (player.getConnection().isClosed()) {
+          return;
+        }
+        if (!handoff.transfer(uuid, door.host(), door.port())) {
+          player.disconnect(RECONNECT);
+          return;
+        }
+        transferred.increment();
+      });
     });
   }
 

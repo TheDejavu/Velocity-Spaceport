@@ -70,6 +70,8 @@ import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
 import com.velocitypowered.proxy.connection.util.VelocityInboundConnection;
 import com.velocitypowered.proxy.network.cluster.ClusterService;
+import com.velocitypowered.proxy.network.login.LoginGate;
+import com.velocitypowered.proxy.network.login.LoginLobbies;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
@@ -181,6 +183,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private int tryIndex = 0;
   private long ping = -1;
   private final boolean onlineMode;
+  private final LoginGate.Session account;
+  private boolean onAServer;
+  private boolean enteredLobby;
   private @Nullable VelocityServerConnection connectedServer;
   private @Nullable VelocityServerConnection connectionInFlight;
   private @Nullable PlayerSettings settings;
@@ -217,6 +222,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.permissionFunction = PermissionFunction.ALWAYS_UNDEFINED;
     this.connectionPhase = connection.getType().getInitialClientPhase();
     this.onlineMode = onlineMode;
+    this.account = LoginGate.untilAuthMe(profile.getId());
     this.clientsideChannels = CappedSet.create(MAX_CLIENTSIDE_PLUGIN_CHANNELS);
 
     if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
@@ -908,12 +914,64 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   /**
+   * The first server is the lobby AuthMe watches. Later moves wait until AuthMe logs them in.
+   */
+  public boolean mayChangeServer() {
+    if (!onAServer) {
+      return true;
+    }
+    return LoginGate.attempt(account, LoginGate.PublicAction.SERVER_SWITCH)
+        == LoginGate.Decision.ALLOW;
+  }
+
+  /** The backend reported an AuthMe login for this connection. */
+  public void authMeLoggedIn() {
+    LoginGate.authMeLoggedIn(account);
+    if (enteredLobby) {
+      return;
+    }
+    List<String> lobbies = server.getConfiguration().getNetworkConfig().loginLobbies();
+    String here = connectedServer == null
+        ? null
+        : connectedServer.getServer().getServerInfo().getName();
+    if (LoginLobbies.staying(here, lobbies)) {
+      enteredLobby = true;
+      return;
+    }
+    enteredLobby = true;
+    openLobby(lobbies, 0);
+  }
+
+  private void openLobby(List<String> lobbies, int index) {
+    if (index >= lobbies.size()) {
+      return;
+    }
+    Optional<RegisteredServer> target = server.getServer(lobbies.get(index));
+    if (target.isEmpty()) {
+      openLobby(lobbies, index + 1);
+      return;
+    }
+    createConnectionRequest(target.get()).connect().whenComplete((result, failure) -> {
+      if (failure != null || result == null || !result.isSuccessful()) {
+        connection.eventLoop().execute(() -> openLobby(lobbies, index + 1));
+      }
+    });
+  }
+
+  public void remindToLogIn() {
+    sendMessage(Component.text("Log in before changing servers.", NamedTextColor.RED));
+  }
+
+  /**
    * Sets the player's new connected server and clears the in-flight connection.
    *
    * @param serverConnection the new server connection
    */
   public void setConnectedServer(@Nullable VelocityServerConnection serverConnection) {
     this.connectedServer = serverConnection;
+    if (serverConnection != null) {
+      this.onAServer = true;
+    }
     ClusterService cluster = server.getCluster();
     if (cluster != null && serverConnection != null && networkSession != 0) {
       cluster.serverChanged(getUniqueId(), networkSession,
@@ -1477,6 +1535,11 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     }
 
     private CompletableFuture<Impl> internalConnect() {
+      if (!mayChangeServer()) {
+        remindToLogIn();
+        return completedFuture(plainResult(ConnectionRequestBuilder.Status.CONNECTION_CANCELLED,
+            toConnect));
+      }
       return this.getInitialStatus().thenCompose(initialCheck -> {
         if (initialCheck.isPresent()) {
           return completedFuture(plainResult(initialCheck.get(), toConnect));
