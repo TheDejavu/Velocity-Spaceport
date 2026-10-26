@@ -96,4 +96,24 @@ class MojangNamesTest {
     names.close();
     verify(client).close();
   }
+
+  @Test
+  void aThrowingOrNullBackendIsSilentNotAnError() {
+    MojangNames throwing = new MojangNames(client, name -> {
+      throw new IllegalStateException("boom");
+    }, () -> 0, () -> 0);
+    assertEquals(Ownership.SILENT, throwing.lookup("Steve").join());
+    MojangNames nulls = new MojangNames(client, name -> null, () -> 0, () -> 0);
+    assertEquals(Ownership.SILENT, nulls.lookup("Steve").join());
+    assertEquals(1, throwing.stats().silent());
+  }
+
+  @Test
+  void anInvalidNameNeverReachesTheBackendOrTheCache() {
+    assertEquals(Ownership.SILENT, names.lookup("bad name\n").join());
+    assertEquals(Ownership.SILENT, names.lookup("a".repeat(17)).join());
+    assertEquals(Ownership.SILENT, names.lookup("").join());
+    assertEquals(0, asked);
+    assertEquals(3, names.stats().silent());
+  }
 }

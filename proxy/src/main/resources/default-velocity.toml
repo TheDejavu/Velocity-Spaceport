@@ -269,7 +269,7 @@ login-lobbies = []
 # Lock a player to the server they joined until a backend login plugin (AuthMe with the
 # spaceport:account message) reports the login. While locked, /server, /send, plugin moves and
 # the backend's own transfers are refused, and only the proxy's own failover between try-list
-# servers still works. Leave false on a network without that backend, or nobody can ever change
+# servers that are not login-lobbies (the login limbos) still works. Leave false on a network without that backend, or nobody can ever change
 # server. Set true on every proxy of a network that runs it.
 login-gate = false
 

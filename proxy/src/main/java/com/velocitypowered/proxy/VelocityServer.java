@@ -194,7 +194,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private VelocityNetwork network = new VelocityNetwork(this, null, null);
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private volatile LoginWave loginWave = new LoginWave(0);
-  private MojangNames mojangNames;
+  private volatile MojangNames mojangNames;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
   private final VelocityEventManager eventManager;
@@ -342,6 +342,11 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     } catch (IOException e) {
       logger.error("Could not open the health listener on {}",
           configuration.getNetworkConfig().healthBind(), e);
+    }
+    if (configuration.getNetworkConfig().loginGateMissing()) {
+      logger.warn("[network] is enabled but login-gate is false: players are not locked to their"
+          + " first server until a login backend accepts them. Set login-gate = true if this"
+          + " network runs AuthMe with spaceport:account.");
     }
     if (configuration.getNetworkConfig().enabled()
         || !configuration.getNetworkConfig().healthBind().isEmpty()) {
@@ -793,6 +798,15 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     if (mojangNames == null) {
       mojangNames = new MojangNames(cm.createHttpClient());
     }
+    return mojangNames;
+  }
+
+  /**
+   * The Mojang name lookup if one exists; never creates it, so metrics cannot open a client.
+   *
+   * @return the lookup, or null if no offline login has used it yet
+   */
+  public @Nullable MojangNames peekMojangNames() {
     return mojangNames;
   }
 

@@ -130,21 +130,38 @@ public final class LoginGate {
   /**
    * Whether a move to another server may start. A player who is not accepted yet moves only
    * when the proxy itself redirects them after a kick, and only to a try-list server (the
-   * login limbos), never to a server a player or plugin picked.
+   * login limbos), never to a server a player or plugin picked. A limbo is a try-list server
+   * that is not also a login lobby, so a failover cannot land on a main lobby unaccepted.
    *
    * @param session the player's session
    * @param joined whether the player has already joined a server
    * @param proxyFailover whether the proxy started this move from a kick or restart
    * @param target the server the move is to
    * @param tryList the servers the proxy falls back through
+   * @param lobbies the main login lobbies, never a failover target before login
    * @return whether the move may go ahead
    */
   public static boolean mayMove(Session session, boolean joined, boolean proxyFailover,
-      String target, List<String> tryList) {
+      String target, List<String> tryList, List<String> lobbies) {
     if (!joined || attempt(session, PublicAction.SERVER_SWITCH) == Decision.ALLOW) {
       return true;
     }
-    return proxyFailover && session != null && LoginLobbies.staying(target, tryList);
+    return proxyFailover && session != null && LoginLobbies.staying(target, tryList)
+        && !LoginLobbies.staying(target, lobbies);
+  }
+
+  /**
+   * Whether a redirect after a kick is the proxy's own choice. A plugin that builds its own
+   * result in the kick event, even for the same server, is not.
+   *
+   * @param chosen the server the final result redirects to
+   * @param proxyChoice the server the proxy picked before the event, or null
+   * @param pluginChangedResult whether the final result is not the proxy's default one
+   * @return whether the redirect counts as a proxy failover
+   */
+  public static boolean isProxyFailover(Object chosen, Object proxyChoice,
+      boolean pluginChangedResult) {
+    return chosen != null && chosen == proxyChoice && !pluginChangedResult;
   }
 
   /** A client packet, command, or listener. Never opens a locked account. */

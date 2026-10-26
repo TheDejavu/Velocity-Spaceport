@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -44,6 +45,7 @@ public final class MojangNames implements AutoCloseable {
   static final Duration OWNS_TTL = Duration.ofHours(1);
   static final Duration FREE_TTL = Duration.ofMinutes(5);
   private static final long LOG_EVERY_MILLIS = 30_000;
+  private static final Pattern NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
 
   /** Lookup counters, for the metrics endpoint. */
   public record Stats(long cacheHits, long owns, long free, long silent) {
@@ -101,7 +103,8 @@ public final class MojangNames implements AutoCloseable {
    * @return the answer; {@link Ownership#SILENT} when Mojang did not give a clear one
    */
   public CompletableFuture<Ownership> lookup(String name) {
-    if (name == null) {
+    if (name == null || !NAME.matcher(name).matches()) {
+      silent.incrementAndGet();
       return CompletableFuture.completedFuture(Ownership.SILENT);
     }
     String key = name.toLowerCase(Locale.ROOT);
@@ -110,7 +113,16 @@ public final class MojangNames implements AutoCloseable {
       hits.incrementAndGet();
       return CompletableFuture.completedFuture(known);
     }
-    return backend.apply(name).handle((answer, error) -> {
+    CompletableFuture<Ownership> asked;
+    try {
+      asked = backend.apply(name);
+    } catch (RuntimeException e) {
+      asked = CompletableFuture.failedFuture(e);
+    }
+    if (asked == null) {
+      asked = CompletableFuture.completedFuture(Ownership.SILENT);
+    }
+    return asked.handle((answer, error) -> {
       Ownership result = error == null && answer != null ? answer : Ownership.SILENT;
       switch (result) {
         case OWNS -> owns.incrementAndGet();

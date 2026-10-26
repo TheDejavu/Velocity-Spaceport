@@ -101,24 +101,46 @@ public final class LoginLobbies {
     }
 
     private void step(int round, int index) {
-      if (!active.getAsBoolean()) {
-        return;
-      }
-      if (index >= lobbies.size()) {
-        if (round + 1 < ROUNDS) {
-          later.accept(() -> step(round + 1, 0), RETRY_SECONDS);
-        } else {
-          gaveUp.run();
+      try {
+        if (!active.getAsBoolean()) {
+          return;
         }
-        return;
-      }
-      mover.apply(lobbies.get(index)).whenComplete((moved, failure) -> {
-        if (failure == null && Boolean.TRUE.equals(moved)) {
-          arrived.run();
-        } else {
-          executor.execute(() -> step(round, index + 1));
+        if (index >= lobbies.size()) {
+          if (round + 1 < ROUNDS) {
+            later.accept(() -> step(round + 1, 0), RETRY_SECONDS);
+          } else {
+            giveUp();
+          }
+          return;
         }
-      });
+        CompletableFuture<Boolean> move;
+        try {
+          move = mover.apply(lobbies.get(index));
+        } catch (RuntimeException e) {
+          move = CompletableFuture.failedFuture(e);
+        }
+        (move == null ? CompletableFuture.<Boolean>failedFuture(new NullPointerException()) : move)
+            .whenComplete((moved, failure) -> {
+              if (failure == null && Boolean.TRUE.equals(moved)) {
+                arrived.run();
+                return;
+              }
+              try {
+                executor.execute(() -> step(round, index + 1));
+              } catch (RuntimeException e) {
+                giveUp();
+              }
+            });
+      } catch (RuntimeException e) {
+        // The scheduler or executor refused work, as at shutdown: stop quietly.
+        giveUp();
+      }
+    }
+
+    private void giveUp() {
+      if (active.getAsBoolean()) {
+        gaveUp.run();
+      }
     }
   }
 }

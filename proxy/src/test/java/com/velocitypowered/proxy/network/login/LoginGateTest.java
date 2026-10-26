@@ -37,6 +37,7 @@ class LoginGateTest {
   private static final UUID MOJANG = UUID.fromString("853c80ef-3c37-49fd-aa49-938b674adae6");
   private static final UUID OFFLINE = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
   private static final UUID CLIENT = UUID.fromString("11111111-1111-1111-1111-111111111111");
+  private static final List<String> LOBBIES = List.of("lobby");
 
   @Test
   void existingAccountRejectsEveryPublicAction() {
@@ -191,28 +192,66 @@ class LoginGateTest {
   void proxyFailoverMovesAnUnacceptedPlayerOnlyBetweenTryListServers() {
     List<String> tryList = List.of("auth-1", "auth-2");
     Session locked = LoginGate.untilAuthMe(OFFLINE);
-    assertTrue(LoginGate.mayMove(locked, false, false, "lobby", tryList));
-    assertTrue(LoginGate.mayMove(locked, true, true, "auth-2", tryList));
-    assertTrue(LoginGate.mayMove(locked, true, true, "AUTH-2", tryList));
-    assertFalse(LoginGate.mayMove(locked, true, true, "lobby", tryList));
-    assertFalse(LoginGate.mayMove(locked, true, true, null, tryList));
-    assertFalse(LoginGate.mayMove(locked, true, true, "auth-2", List.of()));
-    assertFalse(LoginGate.mayMove(null, true, true, "auth-2", tryList));
+    assertTrue(LoginGate.mayMove(locked, false, false, "lobby", tryList, LOBBIES));
+    assertTrue(LoginGate.mayMove(locked, true, true, "auth-2", tryList, LOBBIES));
+    assertTrue(LoginGate.mayMove(locked, true, true, "AUTH-2", tryList, LOBBIES));
+    assertFalse(LoginGate.mayMove(locked, true, true, "lobby", tryList, LOBBIES));
+    assertFalse(LoginGate.mayMove(locked, true, true, null, tryList, LOBBIES));
+    assertFalse(LoginGate.mayMove(locked, true, true, "auth-2", List.of(), LOBBIES));
+    assertFalse(LoginGate.mayMove(null, true, true, "auth-2", tryList, LOBBIES));
   }
 
   @Test
   void playerAndPluginMovesStayBlockedEvenToATryListServer() {
     List<String> tryList = List.of("auth-1", "auth-2");
     Session locked = LoginGate.untilAuthMe(OFFLINE);
-    assertFalse(LoginGate.mayMove(locked, true, false, "auth-2", tryList));
-    assertFalse(LoginGate.mayMove(locked, true, false, "lobby", tryList));
+    assertFalse(LoginGate.mayMove(locked, true, false, "auth-2", tryList, LOBBIES));
+    assertFalse(LoginGate.mayMove(locked, true, false, "lobby", tryList, LOBBIES));
   }
 
   @Test
   void acceptedPlayerMovesAnywhere() {
     Session session = LoginGate.untilAuthMe(OFFLINE);
     LoginGate.authMeLoggedIn(session);
-    assertTrue(LoginGate.mayMove(session, true, false, "lobby", List.of("auth-1")));
-    assertTrue(LoginGate.mayMove(session, true, true, "lobby", List.of("auth-1")));
+    assertTrue(LoginGate.mayMove(session, true, false, "lobby", List.of("auth-1"), LOBBIES));
+    assertTrue(LoginGate.mayMove(session, true, true, "lobby", List.of("auth-1"), LOBBIES));
+  }
+
+  @Test
+  void aMainLobbyIsNeverAFailoverTargetBeforeLogin() {
+    Session locked = LoginGate.untilAuthMe(OFFLINE);
+    assertFalse(LoginGate.mayMove(locked, true, true, "lobby", List.of("auth-1", "lobby"), LOBBIES));
+    assertTrue(LoginGate.mayMove(locked, true, true, "auth-1", List.of("auth-1", "lobby"), LOBBIES));
+  }
+
+  @Test
+  void onlyTheProxysOwnUnchangedRedirectCountsAsFailover() {
+    Object auth2 = new Object();
+    assertTrue(LoginGate.isProxyFailover(auth2, auth2, false));
+    assertFalse(LoginGate.isProxyFailover(auth2, auth2, true));
+    assertFalse(LoginGate.isProxyFailover(new Object(), auth2, false));
+    assertFalse(LoginGate.isProxyFailover(auth2, null, false));
+    assertFalse(LoginGate.isProxyFailover(null, null, false));
+  }
+
+  @Test
+  void aDestinationChangedByAPluginIsGatedByWhereItReallyGoes() {
+    // The check runs again on the final destination with the same failover flag.
+    List<String> tryList = List.of("auth-1", "auth-2");
+    Session locked = LoginGate.untilAuthMe(OFFLINE);
+    assertTrue(LoginGate.mayMove(locked, true, true, "auth-2", tryList, LOBBIES));
+    assertFalse(LoginGate.mayMove(locked, true, true, "survival", tryList, LOBBIES));
+  }
+
+  @Test
+  void startupWarnsWhenTheNetworkIsOnWithoutTheLoginGate() {
+    VelocityConfiguration.NetworkConfig base = VelocityConfiguration.NetworkConfig.DEFAULT;
+    assertFalse(base.loginGateMissing());
+    com.electronwill.nightconfig.core.CommentedConfig c =
+        com.electronwill.nightconfig.core.CommentedConfig.inMemory();
+    c.set("enabled", true);
+    assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGateMissing());
+    c.set("login-gate", true);
+    assertFalse(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGateMissing());
   }
 }

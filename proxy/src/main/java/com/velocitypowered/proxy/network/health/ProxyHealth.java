@@ -352,7 +352,7 @@ public final class ProxyHealth implements AutoCloseable {
   }
 
   private void mojangLookups(StringBuilder out) {
-    MojangNames names = server.getMojangNames();
+    MojangNames names = server.peekMojangNames();
     if (names == null) {
       return;
     }

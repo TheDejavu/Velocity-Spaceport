@@ -123,6 +123,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.key.Key;
@@ -187,7 +188,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private final LoginGate.Session account;
   private boolean onAServer;
   private volatile boolean enteredLobby;
-  private volatile boolean searchingLobby;
+  private final AtomicBoolean searchingLobby = new AtomicBoolean();
   private @Nullable VelocityServerConnection connectedServer;
   private @Nullable VelocityServerConnection connectionInFlight;
   private @Nullable PlayerSettings settings;
@@ -789,11 +790,11 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     }
     KickedFromServerEvent originalEvent = new KickedFromServerEvent(this, rs, kickReason,
         !kickedFromCurrent, result);
-    handleKickEvent(originalEvent, friendlyReason, kickedFromCurrent);
+    handleKickEvent(originalEvent, friendlyReason, kickedFromCurrent, result);
   }
 
   private void handleKickEvent(KickedFromServerEvent originalEvent, Component friendlyReason,
-                               boolean kickedFromCurrent) {
+                               boolean kickedFromCurrent, ServerKickResult proxyDefault) {
     server.getEventManager().fire(originalEvent).thenAcceptAsync(event -> {
       // There can't be any connection in flight now.
       connectionInFlight = null;
@@ -812,7 +813,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       switch (event.getResult()) {
         case DisconnectPlayer res -> disconnect(res.getReasonComponent());
         case RedirectPlayer res -> createConnectionRequest(res.getServer(),
-                previousConnection, true).connect()
+                previousConnection, LoginGate.isProxyFailover(res.getServer(),
+                    proxyDefault instanceof RedirectPlayer d ? d.getServer() : null,
+                    event.getResult() != proxyDefault)).connect()
                 .whenCompleteAsync((status, throwable) -> {
                   if (throwable != null) {
                     handleConnectionException(res.getServer(), throwable, true);
@@ -930,13 +933,14 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       tryList.addAll(serversToTry);
     }
     String name = target == null ? null : target.getServerInfo().getName();
-    return LoginGate.mayMove(account, onAServer, proxyFailover, name, tryList);
+    return LoginGate.mayMove(account, onAServer, proxyFailover, name, tryList,
+        server.getConfiguration().getNetworkConfig().loginLobbies());
   }
 
   /** The backend reported an AuthMe login for this connection. */
   public void authMeLoggedIn() {
     LoginGate.authMeLoggedIn(account);
-    if (enteredLobby || searchingLobby) {
+    if (enteredLobby) {
       return;
     }
     List<String> lobbies = server.getConfiguration().getNetworkConfig().loginLobbies();
@@ -951,17 +955,19 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       enteredLobby = true;
       return;
     }
-    searchingLobby = true;
+    if (!searchingLobby.compareAndSet(false, true)) {
+      return;
+    }
     new LoginLobbies.Search(lobbies, this::moveToLobby,
         (task, seconds) -> connection.eventLoop().schedule(task, seconds, TimeUnit.SECONDS),
         connection.eventLoop(), this::isActive,
         () -> {
-          searchingLobby = false;
           enteredLobby = true;
+          searchingLobby.set(false);
         },
         () -> {
           // The next AuthMe packet searches again.
-          searchingLobby = false;
+          searchingLobby.set(false);
           sendMessage(Component.text(LoginLobbies.UNAVAILABLE, NamedTextColor.RED));
         }).start();
   }
@@ -972,7 +978,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       return completedFuture(false);
     }
     return createConnectionRequest(target.get()).connect()
-        .handle((result, failure) -> failure == null && result != null && result.isSuccessful());
+        .handle((result, failure) -> failure == null && result != null
+            && (result.isSuccessful()
+            || result.getStatus() == ConnectionRequestBuilder.Status.ALREADY_CONNECTED));
   }
 
   public void remindToLogIn() {
@@ -1580,6 +1588,12 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
           }
 
           RegisteredServer realDestination = newDest.get();
+          // A plugin may have changed the destination: gate the one that is really used.
+          if (!mayChangeServer(realDestination, proxyFailover)) {
+            remindToLogIn();
+            return completedFuture(plainResult(
+                ConnectionRequestBuilder.Status.CONNECTION_CANCELLED, realDestination));
+          }
           Optional<ConnectionRequestBuilder.Status> check = checkServer(realDestination);
           if (check.isPresent()) {
             return completedFuture(plainResult(check.get(), realDestination));

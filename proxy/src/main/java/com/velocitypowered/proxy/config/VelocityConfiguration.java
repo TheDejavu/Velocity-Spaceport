@@ -1174,6 +1174,16 @@ public class VelocityConfiguration implements ProxyConfig {
       }
     }
 
+    /**
+     * Whether the network is on but the login gate is not, which leaves nobody locked before
+     * AuthMe. Worth a warning at start.
+     *
+     * @return true when {@code enabled} and not {@code loginGate}
+     */
+    public boolean loginGateMissing() {
+      return enabled && !loginGate;
+    }
+
     public boolean newestWins() {
       return duplicateLogin.equals("newest-wins");
     }

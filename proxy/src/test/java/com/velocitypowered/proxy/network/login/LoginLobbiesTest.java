@@ -115,4 +115,46 @@ class LoginLobbiesTest {
     assertEquals(0, run.arrived);
     assertEquals(1, run.asked.size());
   }
+
+  @Test
+  void aThrowingMoverCountsAsAFailureAndTheNextLobbyIsTried() {
+    List<String> asked = new ArrayList<>();
+    int[] outcome = new int[2];
+    new LoginLobbies.Search(List.of("a", "b"), name -> {
+      asked.add(name);
+      if (name.equals("a")) {
+        throw new IllegalStateException("boom");
+      }
+      return CompletableFuture.completedFuture(true);
+    }, (task, seconds) -> { }, Runnable::run, () -> true, () -> outcome[0]++,
+        () -> outcome[1]++).start();
+    assertEquals(List.of("a", "b"), asked);
+    assertEquals(1, outcome[0]);
+    assertEquals(0, outcome[1]);
+  }
+
+  @Test
+  void aMoverThatFailsEverywhereGivesUpOnceEvenIfSchedulingIsRefused() {
+    int[] outcome = new int[2];
+    new LoginLobbies.Search(List.of("a"), name -> {
+      throw new IllegalStateException("boom");
+    }, (task, seconds) -> {
+      throw new java.util.concurrent.RejectedExecutionException();
+    }, Runnable::run, () -> true, () -> outcome[0]++, () -> outcome[1]++).start();
+    assertEquals(0, outcome[0]);
+    assertEquals(1, outcome[1]);
+  }
+
+  @Test
+  void aNullFutureIsAFailureAndAGonePlayerGetsNoGiveUp() {
+    int[] outcome = new int[2];
+    boolean[] active = {true};
+    new LoginLobbies.Search(List.of("a"), name -> {
+      active[0] = false;
+      return null;
+    }, (task, seconds) -> { }, Runnable::run, () -> active[0], () -> outcome[0]++,
+        () -> outcome[1]++).start();
+    assertEquals(0, outcome[0]);
+    assertEquals(0, outcome[1]);
+  }
 }
