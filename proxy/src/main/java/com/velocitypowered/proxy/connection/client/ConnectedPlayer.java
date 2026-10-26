@@ -186,7 +186,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private final boolean onlineMode;
   private final LoginGate.Session account;
   private boolean onAServer;
-  private boolean enteredLobby;
+  private volatile boolean enteredLobby;
+  private volatile boolean searchingLobby;
   private @Nullable VelocityServerConnection connectedServer;
   private @Nullable VelocityServerConnection connectionInFlight;
   private @Nullable PlayerSettings settings;
@@ -935,7 +936,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   /** The backend reported an AuthMe login for this connection. */
   public void authMeLoggedIn() {
     LoginGate.authMeLoggedIn(account);
-    if (enteredLobby) {
+    if (enteredLobby || searchingLobby) {
       return;
     }
     List<String> lobbies = server.getConfiguration().getNetworkConfig().loginLobbies();
@@ -946,24 +947,32 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       enteredLobby = true;
       return;
     }
-    enteredLobby = true;
-    openLobby(lobbies, 0);
+    if (lobbies.isEmpty()) {
+      enteredLobby = true;
+      return;
+    }
+    searchingLobby = true;
+    new LoginLobbies.Search(lobbies, this::moveToLobby,
+        (task, seconds) -> connection.eventLoop().schedule(task, seconds, TimeUnit.SECONDS),
+        connection.eventLoop(), this::isActive,
+        () -> {
+          searchingLobby = false;
+          enteredLobby = true;
+        },
+        () -> {
+          // The next AuthMe packet searches again.
+          searchingLobby = false;
+          sendMessage(Component.text(LoginLobbies.UNAVAILABLE, NamedTextColor.RED));
+        }).start();
   }
 
-  private void openLobby(List<String> lobbies, int index) {
-    if (index >= lobbies.size()) {
-      return;
-    }
-    Optional<RegisteredServer> target = server.getServer(lobbies.get(index));
+  private CompletableFuture<Boolean> moveToLobby(String name) {
+    Optional<RegisteredServer> target = server.getServer(name);
     if (target.isEmpty()) {
-      openLobby(lobbies, index + 1);
-      return;
+      return completedFuture(false);
     }
-    createConnectionRequest(target.get()).connect().whenComplete((result, failure) -> {
-      if (failure != null || result == null || !result.isSuccessful()) {
-        connection.eventLoop().execute(() -> openLobby(lobbies, index + 1));
-      }
-    });
+    return createConnectionRequest(target.get()).connect()
+        .handle((result, failure) -> failure == null && result != null && result.isSuccessful());
   }
 
   public void remindToLogIn() {
