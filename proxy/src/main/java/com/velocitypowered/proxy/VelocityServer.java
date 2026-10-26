@@ -345,7 +345,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     }
     if (configuration.getNetworkConfig().loginGateMissing()) {
       logger.warn("[network] is enabled but login-gate is false: players are not locked to their"
-          + " first server until a login backend accepts them. Set login-gate = true if this"
+          + " first server until a login backend accepts them. Remove login-gate = false if this"
           + " network runs AuthMe with spaceport:account.");
     }
     if (configuration.getNetworkConfig().enabled()

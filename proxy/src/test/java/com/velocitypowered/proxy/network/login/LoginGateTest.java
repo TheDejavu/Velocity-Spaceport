@@ -244,14 +244,18 @@ class LoginGateTest {
   }
 
   @Test
-  void startupWarnsWhenTheNetworkIsOnWithoutTheLoginGate() {
+  void loginGateFailsClosedWhenTheNetworkIsOn() {
     VelocityConfiguration.NetworkConfig base = VelocityConfiguration.NetworkConfig.DEFAULT;
     assertFalse(base.loginGateMissing());
     com.electronwill.nightconfig.core.CommentedConfig c =
         com.electronwill.nightconfig.core.CommentedConfig.inMemory();
     c.set("enabled", true);
-    assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGateMissing());
-    c.set("login-gate", true);
+    assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGate());
     assertFalse(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGateMissing());
+    c.set("login-gate", false);
+    assertTrue(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGateMissing());
+    c.set("enabled", false);
+    c.remove("login-gate");
+    assertFalse(VelocityConfiguration.NetworkConfig.fromConfig(c).loginGate());
   }
 }

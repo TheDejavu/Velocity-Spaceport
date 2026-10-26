@@ -1082,7 +1082,8 @@ public class VelocityConfiguration implements ProxyConfig {
    * @param loginLobbies servers a player is moved to after the account is accepted; empty leaves
    *     them on the server they logged in on
    * @param loginGate whether a player stays locked to the server they joined until a backend
-   *     (AuthMe) reports the login; leave off on a network without such a backend
+   *     (AuthMe) reports the login; on by default when the network is on, set false on a
+   *     network without such a backend
    */
   public record NetworkConfig(boolean enabled, String proxyId, String redisUri, String keyPrefix,
                               String store, String duplicateLogin, String redisDownPolicy,
@@ -1175,8 +1176,8 @@ public class VelocityConfiguration implements ProxyConfig {
     }
 
     /**
-     * Whether the network is on but the login gate is not, which leaves nobody locked before
-     * AuthMe. Worth a warning at start.
+     * Whether the network is on but the login gate was turned off, which leaves nobody locked
+     * before AuthMe. Worth a warning at start.
      *
      * @return true when {@code enabled} and not {@code loginGate}
      */
@@ -1202,8 +1203,9 @@ public class VelocityConfiguration implements ProxyConfig {
       if (config == null) {
         return DEFAULT;
       }
+      boolean enabled = config.getOrElse("enabled", DEFAULT.enabled());
       return new NetworkConfig(
-          config.getOrElse("enabled", DEFAULT.enabled()),
+          enabled,
           config.getOrElse("proxy-id", DEFAULT.proxyId()),
           config.getOrElse("redis-uri", DEFAULT.redisUri()),
           config.getOrElse("key-prefix", DEFAULT.keyPrefix()),
@@ -1232,7 +1234,8 @@ public class VelocityConfiguration implements ProxyConfig {
           config.getIntOrElse("bedrock-port", DEFAULT.bedrockPort()),
           config.getOrElse("bedrock-prefix", DEFAULT.bedrockPrefix()),
           config.getOrElse("login-lobbies", DEFAULT.loginLobbies()),
-          config.getOrElse("login-gate", DEFAULT.loginGate()));
+          // Fail closed: a network proxy is gated unless the config turns it off.
+          config.getOrElse("login-gate", enabled));
     }
   }
 }
