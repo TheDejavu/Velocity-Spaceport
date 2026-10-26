@@ -1,0 +1,52 @@
+name: Build and release
+
+on:
+  push:
+    branches: [spaceport]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build
+        run: ./gradlew build
+      - name: Pick the proxy jar
+        id: jar
+        run: |
+          jar=$(ls proxy/build/libs/*.jar | grep -vE -- '-(sources|javadoc|plain)\.jar$' | xargs ls -S | head -1)
+          cp "$jar" spaceport.jar
+          echo "sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spaceport-${{ steps.jar.outputs.sha }}
+          path: spaceport.jar
+
+      # Every push to spaceport refreshes the "dev" pre-release with the newest jar.
+      - name: Update dev build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/spaceport'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev --yes --cleanup-tag || true
+          gh release create dev spaceport.jar --prerelease --target "$GITHUB_SHA" \
+            --title "Dev build ${{ steps.jar.outputs.sha }}" \
+            --notes "Latest build of the spaceport branch (${{ steps.jar.outputs.sha }}). Not a stable release."
+
+      # Pushing a tag like v1.2.0 makes a normal release with the jar attached.
+      - name: Tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" spaceport.jar --title "Spaceport $GITHUB_REF_NAME" --generate-notes
