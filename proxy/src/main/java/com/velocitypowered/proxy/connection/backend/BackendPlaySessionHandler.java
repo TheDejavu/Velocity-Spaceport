@@ -34,6 +34,7 @@ import com.velocitypowered.api.event.player.ServerResourcePackSendEvent;
 import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
+import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.proxy.player.ResourcePackInfo;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.command.CommandGraphInjector;
@@ -83,6 +84,7 @@ import io.netty.channel.Channel;
 import io.netty.handler.timeout.ReadTimeoutException;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import net.kyori.adventure.key.Key;
@@ -103,6 +105,9 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   private static final int LARGE_PACKET_THRESHOLD = 1024 * 128;
   private static final boolean FAILOVER_ON_TIMEOUT =
       VelocityProperties.readBoolean("spaceport.failover-on-backend-timeout", true);
+  private static final List<ChannelIdentifier> BACKEND_REPORT_CHANNELS = List.of(
+      MinecraftChannelIdentifier.from(LoginGate.LOGGED_IN_CHANNEL),
+      MinecraftChannelIdentifier.from("spaceport:saved"));
 
   private final VelocityServer server;
   private final VelocityServerConnection serverConn;
@@ -146,7 +151,10 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
           ImmutableList.of(getBungeeCordChannel(serverMc.getProtocolVersion()))
       ));
     }
-
+    // Bukkit drops a plugin message on a channel the player never registered, and vanilla
+    // clients register none, so the proxy registers the channels backends report back on.
+    serverMc.write(PluginMessageUtil.constructChannelsPacket(serverMc.getProtocolVersion(),
+        BACKEND_REPORT_CHANNELS));
   }
 
   @Override
